@@ -19,7 +19,7 @@ ConstantPool::ConstantPool(BlockOfCode& code, size_t size)
     code.int3();
     code.align(align_size);
     pool = std::span<ConstantT>(
-        // x86code: the pool is carved from the freshly mapped code space in BlockOfCode's constructor, so it is already
+        // x86sim: the pool is carved from the freshly mapped code space in BlockOfCode's constructor, so it is already
         // zero; a memset touched all 2 MB in every process (only the used part, tens of KB, is ever written).
         reinterpret_cast<ConstantT*>(code.AllocateFromCodeSpace(size, false)), size / align_size);
 }
@@ -51,7 +51,7 @@ void ConstantPool::Restore(const u8* data, size_t used_bytes) {
     }
     // Rebuild the lookup map from restored slots so later GetConstant reuses them.
     constant_info.clear();
-    // x86Code Speed 18: all-zero slots may be gaps of a merged pool (another builder's region): not reused.
+    // x86Sim Speed 18: all-zero slots may be gaps of a merged pool (another builder's region): not reused.
     for (size_t i = 0; i < insertion_point; i++) {
         if (pool[i].first == 0 && pool[i].second == 0) continue;
         constant_info.insert({pool[i], &pool[i]});

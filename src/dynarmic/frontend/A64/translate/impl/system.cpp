@@ -14,7 +14,7 @@ enum class SystemRegisterEncoding : u32 {
     CNTFRQ_EL0 = 0b11'1110'011'000'0000,
     // Counter-timer Physical Count register
     CNTPCT_EL0 = 0b11'1110'011'001'0000,
-    // x86Code: Counter-timer Virtual Count register (CNTVOFF is 0 for user code on Apple platforms: same as CNTPCT),
+    // x86Sim: Counter-timer Virtual Count register (CNTVOFF is 0 for user code on Apple platforms: same as CNTPCT),
     // and the self-synchronized views (FEAT_ECV): JavaScriptCore's WTF::UnbarrieredMonotonicTime reads CNTVCT_EL0
     CNTVCT_EL0 = 0b11'1110'011'010'0000,
     CNTPCTSS_EL0 = 0b11'1110'011'101'0000,

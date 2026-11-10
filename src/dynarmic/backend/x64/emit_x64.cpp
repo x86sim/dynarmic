@@ -46,7 +46,7 @@ void EmitContext::EraseInstruction(IR::Inst* inst) {
 EmitX64::EmitX64(BlockOfCode& code)
         : code(code) {
     exception_handler.Register(code);
-    // x86Code (Speed 11): 32 B buckets, filled to at most 0.5 by default (SpringBoard: 16 MB for 210k blocks). Lookups
+    // x86Sim (Speed 11): 32 B buckets, filled to at most 0.5 by default (SpringBoard: 16 MB for 210k blocks). Lookups
     // here are on the locked path only (the dispatcher uses lf_map).
     block_descriptors.max_load_factor(0.9f);
 }
@@ -97,7 +97,7 @@ void EmitX64::LockFreeBlockMap::Set(u64 k, CodePtr c) {
             if (e == k || e == 0) return;
         }
     }
-    // x86Code (Speed 10): grow at 75% load (was 50%: the table sat 25-50% full, SpringBoard's at 32 MB). Linear
+    // x86Sim (Speed 10): grow at 75% load (was 50%: the table sat 25-50% full, SpringBoard's at 32 MB). Linear
     // probing at 75% costs ~2.5 probes per hit, ~8 per miss; misses go on to translate anyway.
     if ((used + 1) * 4 > (t->mask + 1) * 3) {
         const size_t n = (t->mask + 1) * 2;
@@ -316,7 +316,7 @@ void EmitX64::PushRSBHelper(Xbyak::Reg64 loc_desc_reg, Xbyak::Reg64 index_reg, I
     using namespace Xbyak::util;
 
     const auto block = GetBasicBlock(target);
-    CodePtr target_code_ptr = block ? block->entrypoint : nullptr;  // x86Code Perf 1: EmitPatchMovRcx picks the unlinked form
+    CodePtr target_code_ptr = block ? block->entrypoint : nullptr;  // x86Sim Perf 1: EmitPatchMovRcx picks the unlinked form
 
     code.mov(index_reg.cvt32(), dword[r15 + code.GetJitStateInfo().offsetof_rsb_ptr]);
 

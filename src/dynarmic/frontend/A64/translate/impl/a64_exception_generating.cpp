@@ -12,7 +12,7 @@ bool TranslatorVisitor::BRK(Imm<16> /*imm16*/) {
 }
 
 bool TranslatorVisitor::SVC(Imm<16> imm16) {
-    // x86Code: guest→native thunks are "svc #i; ret". With fuse_svc_ret, peek the next insn; if it is RET X30,
+    // x86Sim: guest→native thunks are "svc #i; ret". With fuse_svc_ret, peek the next insn; if it is RET X30,
     // skip PushRSB and end in FastDispatchHint: the ret block runs straight from the dispatcher instead of
     // PopRSBHint, which (RSB off under shared translations) returns from Run() after every libsystem call.
     constexpr u32 kRetX30 = 0xD65F03C0u;

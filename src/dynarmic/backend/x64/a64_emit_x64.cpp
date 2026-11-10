@@ -124,7 +124,7 @@ A64EmitX64::A64EmitX64(BlockOfCode& code, A64::UserConfig conf, A64::Jit* jit_in
     });
 }
 
-// x86Code RAM 3: unchecked fastmem faults on an address above 47 bits (Swift's tagged _StringObject pointers,
+// x86Sim RAM 3: unchecked fastmem faults on an address above 47 bits (Swift's tagged _StringObject pointers,
 // Darwin's top-byte tags). A site that keeps faulting (a few hot Swift string accessors) is not worth a signal per
 // access: after kCheckAfterFaults its block is invalidated and retranslated with the inline check (checked_blocks).
 // Runs in the SIGSEGV handler with the emitter lock held, like dynarmic's recompile_on_fastmem_failure; the faulting
@@ -152,7 +152,7 @@ void A64EmitX64::OnFastmemFault(u64 rip) {
         return;
     }
     checked_retranslations++;
-    if (static const bool log = std::getenv("X86CODE_A64_CHECKLOG") != nullptr; log) {
+    if (static const bool log = std::getenv("X86SIM_A64_CHECKLOG") != nullptr; log) {
         std::fprintf(stderr, "dynarmic: fastmem site %#llx faulted %llu times: block %#llx retranslated with the address check\n",
                      (unsigned long long)rip, (unsigned long long)kCheckAfterFaults, (unsigned long long)A64::LocationDescriptor{IR::LocationDescriptor{*loc}}.PC());
     }
@@ -195,7 +195,7 @@ std::optional<u64> A64EmitX64::StaticImageBlockAt(u64 off) {
 A64EmitX64::~A64EmitX64() = default;
 
 namespace {
-// x86Code Speed 18: direct successors of a block (static AOT discovery follows them).
+// x86Sim Speed 18: direct successors of a block (static AOT discovery follows them).
 void CollectSuccessors(const IR::Terminal& t, std::vector<u64>& out) {
     if (const auto* lb = boost::get<IR::Term::LinkBlock>(&t)) {
         out.push_back(lb->next.Value());
@@ -331,7 +331,7 @@ A64EmitX64::BlockDescriptor A64EmitX64::Emit(IR::Block& block) {
     return bd;
 }
 
-// x86Code: hand-written objc_msgSend cache probe matching iOS 27.0 sim libobjcMsgSend
+// x86Sim: hand-written objc_msgSend cache probe matching iOS 27.0 sim libobjcMsgSend
 // (isa mask 0x7ffffffffffff8, cache at class+0x10, HIGH_16_BIG_ADDRS, bucket {imp^class, sel},
 // post-index ldp #-16). One x86 block; hit → FastDispatch to IMP; miss → uncached; nil → LR.
 A64EmitX64::BlockDescriptor A64EmitX64::EmitInlineObjCMsgSend(IR::LocationDescriptor location) {
@@ -504,7 +504,7 @@ namespace {
 // A64JC05: also persist the x86 constant pool (RIP targets from movi/FP immediates).
 // A64JC06: block link sites (target, site offset, kind) so loaded blocks are linked, not dispatched (Speed 5).
 constexpr char kPersistMagic[8] = {'A', '6', '4', 'J', 'C', '0', '6', '\0'};
-// x86Code Speed 18: one chunk (library / executable) of a chunked AOT image, see SaveChunk / AssembleChunks.
+// x86Sim Speed 18: one chunk (library / executable) of a chunked AOT image, see SaveChunk / AssembleChunks.
 constexpr char kChunkMagic[8] = {'A', '6', '4', 'C', 'K', '0', '1', '\0'};
 constexpr u64 kWholeSlab = ~0ull;
 
@@ -586,7 +586,7 @@ size_t A64EmitX64::SavePersistentCache(const std::string& path, const u8 cache_u
     return SaveChunk(path, cache_uuid, build_id, cache_lo, cache_hi, kWholeSlab);
 }
 
-// x86Code Speed 18: code_off == kWholeSlab saves the whole slab (A64JC06); otherwise only blocks from code_off on, as
+// x86Sim Speed 18: code_off == kWholeSlab saves the whole slab (A64JC06); otherwise only blocks from code_off on, as
 // an A64CK01 chunk (header, then u64 code_off, then the same sections; the code section holds [code_off, code_size)).
 size_t A64EmitX64::SaveChunk(const std::string& path, const u8 cache_uuid[16], u64 build_id,
                              u64 cache_lo, u64 cache_hi, u64 code_off) {
@@ -740,7 +740,7 @@ size_t A64EmitX64::SaveChunk(const std::string& path, const u8 cache_uuid[16], u
             }
         });
     }
-    // x86Code Speed 25: PushRSB's `mov rcx, imm64` sites. The live imm64 may hold a patched block pointer while its
+    // x86Sim Speed 25: PushRSB's `mov rcx, imm64` sites. The live imm64 may hold a patched block pointer while its
     // reloc entry still has the emit-time kind, and the target block may not be persisted at all (the slab is int3
     // filler there): a loading process pushed that pointer and its return jumped into int3 (SIGTRAP in launchd_sim
     // once RSB was on). Save every site in its unlinked form (ReturnFromRun, with that reloc kind) and as a link, so
@@ -864,7 +864,7 @@ size_t A64EmitX64::SaveChunk(const std::string& path, const u8 cache_uuid[16], u
         }
     }
     std::fclose(f);
-    if (std::getenv("X86CODE_A64_JITCACHE_DEBUG")) {
+    if (std::getenv("X86SIM_A64_JITCACHE_DEBUG")) {
         size_t gap = 0;
         for (bool p : in_persisted) {
             if (!p) gap++;
@@ -982,14 +982,14 @@ std::vector<u8> A64EmitX64::ReadPersistentPool(const std::string& path) {
 }
 
 namespace {
-// x86Code Speed 9: the prelude (dispatcher, terminal handlers, ~7,700 fastmem fallback thunks: ~3.8 MB, ~1.8 MB of it
+// x86Sim Speed 9: the prelude (dispatcher, terminal handlers, ~7,700 fastmem fallback thunks: ~3.8 MB, ~1.8 MB of it
 // written) is byte-identical in every process with the same layout, yet each kept a private copy (~46 MB over one sim's
 // ~26 image processes). Content-addressed <aot>.prelude.<hash>: the first process publishes its bytes, the others map
 // the file MAP_PRIVATE over their identical copy (a page written later becomes private again). Layout differences (the
 // FastDispatch mask of apps vs daemons, a table that missed its fixed address) just give another file or no sharing.
-// X86CODE_A64_PRELUDE_SHARE=0 turns it off.
+// X86SIM_A64_PRELUDE_SHARE=0 turns it off.
 void SharePrelude(const std::string& aot_path, u64 lo, u64 hi) {
-    if (hi <= lo || (std::getenv("X86CODE_A64_PRELUDE_SHARE") && std::atoi(std::getenv("X86CODE_A64_PRELUDE_SHARE")) == 0)) {
+    if (hi <= lo || (std::getenv("X86SIM_A64_PRELUDE_SHARE") && std::atoi(std::getenv("X86SIM_A64_PRELUDE_SHARE")) == 0)) {
         return;
     }
     const u64 len = hi - lo;
@@ -1044,12 +1044,12 @@ void SharePrelude(const std::string& aot_path, u64 lo, u64 hi) {
     close(fd);
 }
 
-// Speed 28: the shared relocated image (.map) on huge pages. A copy on tmpfs (X86CODE_A64_AOT_HUGE_DIR, default
-// /tmp/x86code-a64-img: RAM; the container's /dev/shm is noexec) is filled through a MADV_HUGEPAGE mapping, so its
+// Speed 28: the shared relocated image (.map) on huge pages. A copy on tmpfs (X86SIM_A64_AOT_HUGE_DIR, default
+// /tmp/x86sim-a64-img: RAM; the container's /dev/shm is noexec) is filled through a MADV_HUGEPAGE mapping, so its
 // page-cache folios are 2 MB (the mounts are huge=advise); every process maps it MAP_PRIVATE with MADV_HUGEPAGE and
 // read faults map whole PMDs (the code region base is 2 MB aligned, so addresses and file offsets agree mod 2 MB).
 // One copy per layout name; others in the directory are dropped when a new one is built (mapped ones stay alive
-// until their processes exit). X86CODE_A64_AOT_HUGE=0: map the .map file itself as before. Caller holds the layout lock.
+// until their processes exit). X86SIM_A64_AOT_HUGE=0: map the .map file itself as before. Caller holds the layout lock.
 // Speed 34: fills hp (huge-page tmpfs copy of the .map) from mfd; false when it failed or got small pages.
 bool BuildHugeCopy(const std::string& map_path, int mfd, const std::string& hp, u64 len) {
     const std::string tmp = hp + ".tmp." + std::to_string(getpid());
@@ -1153,8 +1153,8 @@ void SpawnHugeCopy(const std::string& map_path, const std::string& hp, u64 pad) 
 int HugeImageFd(const std::string& map_path, int mfd, u64 pad) {
     // Off by default (2026-11-03 defaults A/B, 3 fresh boots each): no measurable speed win over the file mapping
     // (Settings cold 4.34-4.51 vs 4.26-4.32 s, boot and taps equal), and the tmpfs copy pins the whole image in RAM
-    // (1216 MB) where the page cache holds only touched, reclaimable pages. X86CODE_A64_AOT_HUGE=1 turns it on.
-    if (const char* e = std::getenv("X86CODE_A64_AOT_HUGE"); !(e && std::atoi(e) == 1)) {
+    // (1216 MB) where the page cache holds only touched, reclaimable pages. X86SIM_A64_AOT_HUGE=1 turns it on.
+    if (const char* e = std::getenv("X86SIM_A64_AOT_HUGE"); !(e && std::atoi(e) == 1)) {
         return -1;
     }
     struct stat ms {};
@@ -1162,8 +1162,8 @@ int HugeImageFd(const std::string& map_path, int mfd, u64 pad) {
         return -1;
     }
     const u64 len = static_cast<u64>(ms.st_size) + pad;
-    const char* d = std::getenv("X86CODE_A64_AOT_HUGE_DIR");
-    const std::string dir = d ? d : "/tmp/x86code-a64-img";
+    const char* d = std::getenv("X86SIM_A64_AOT_HUGE_DIR");
+    const std::string dir = d ? d : "/tmp/x86sim-a64-img";
     mkdir(dir.c_str(), 0755);
     const std::string base = map_path.substr(map_path.rfind('/') + 1);
     const std::string hp = dir + "/" + base;
@@ -1182,8 +1182,8 @@ int HugeImageFd(const std::string& map_path, int mfd, u64 pad) {
     // Speed 35: the copy no longer runs in a guest. The first process that finds no copy (and no fresh build marker)
     // starts linux/arm64jit's a64hugecopy next to libarm64jit.so (its own Linux process, detached) and maps the .map
     // itself, like every process until the copy is linked in. Speed 34's foreground copy (2-5 s in the first open after
-    // an image change, under the layout lock) is opt-in: X86CODE_A64_AOT_HUGE_FG=1.
-    static const bool fg = [] { const char* e = std::getenv("X86CODE_A64_AOT_HUGE_FG"); return e && std::atoi(e) == 1; }();
+    // an image change, under the layout lock) is opt-in: X86SIM_A64_AOT_HUGE_FG=1.
+    static const bool fg = [] { const char* e = std::getenv("X86SIM_A64_AOT_HUGE_FG"); return e && std::atoi(e) == 1; }();
     if (!fg || pad) {  // the foreground copy has no pad
         SpawnHugeCopy(map_path, hp, pad);
         return -1;
@@ -1204,11 +1204,11 @@ int HugeImageFd(const std::string& map_path, int mfd, u64 pad) {
 }
 
 // Maps [lo, hi) of the image from the huge copy when there is one (else from mfd) at file offset off.
-// x86Code RAM 13: the shared image's file mappings stay out of core dumps (X86CODE_A64_IMAGE_DUMP=1 keeps them): a
+// x86Sim RAM 13: the shared image's file mappings stay out of core dumps (X86SIM_A64_IMAGE_DUMP=1 keeps them): a
 // dump reads every mapped page, so each crashing image process faulted the whole 1.3 GB image into the page cache
 // (WebKit's helpers abort on Safari's teardown: one dump pass showed 870 MB of image pages). The code is in the file.
 static void ImageDontDump(void* m, size_t len) {
-    static const bool keep = [] { const char* e = std::getenv("X86CODE_A64_IMAGE_DUMP"); return e && std::atoi(e) == 1; }();
+    static const bool keep = [] { const char* e = std::getenv("X86SIM_A64_IMAGE_DUMP"); return e && std::atoi(e) == 1; }();
     if (m != MAP_FAILED && !keep) {
         madvise(m, len, MADV_DONTDUMP);
     }
@@ -1262,7 +1262,7 @@ size_t A64EmitX64::LoadPersistentCache(const std::string& path, const u8 cache_u
         std::fclose(f);
         return 0;
     }
-    if (std::getenv("X86CODE_A64_JITCACHE_DEBUG")) {
+    if (std::getenv("X86SIM_A64_JITCACHE_DEBUG")) {
         std::fprintf(stderr,
                      "a64jitcache: load begin old=%#llx new=%#llx ret old=%#llx new=%#llx prelude=%llu relocs=%llu fastmem=%llu\n",
                      static_cast<unsigned long long>(hdr.old_bases[static_cast<size_t>(RelocKind::CodeBegin)]),
@@ -1328,7 +1328,7 @@ size_t A64EmitX64::LoadPersistentCache(const std::string& path, const u8 cache_u
     const u64 end_ceil = (end_u64 + page - 1) & ~(page - 1);
     std::string map_path;
     bool mapped = false;
-    if (shared_image && !std::getenv("X86CODE_A64_JITCACHE_NOLINK") && !std::getenv("X86CODE_A64_JITCACHE_SKIP_RANGE")) {
+    if (shared_image && !std::getenv("X86SIM_A64_JITCACHE_NOLINK") && !std::getenv("X86SIM_A64_JITCACHE_SKIP_RANGE")) {
         u64 h = 0xcbf29ce484222325ull;
         const auto mix = [&h](u64 v) {
             for (int i = 0; i < 8; i++) {
@@ -1378,15 +1378,15 @@ size_t A64EmitX64::LoadPersistentCache(const std::string& path, const u8 cache_u
             close(mfd);
         }
     }
-    // Speed 7: static image metadata (see EmitX64::StaticImage); X86CODE_A64_AOT_LAZY=0 registers every block as before.
-    const bool lazy = !map_path.empty() && !(std::getenv("X86CODE_A64_AOT_LAZY") && std::atoi(std::getenv("X86CODE_A64_AOT_LAZY")) == 0);
+    // Speed 7: static image metadata (see EmitX64::StaticImage); X86SIM_A64_AOT_LAZY=0 registers every block as before.
+    const bool lazy = !map_path.empty() && !(std::getenv("X86SIM_A64_AOT_LAZY") && std::atoi(std::getenv("X86SIM_A64_AOT_LAZY")) == 0);
     // Speed 10: a published .map + complete .idx for this layout is all a process needs (sorted blocks, links and
     // fastmem sites; the layout hash in the name pins the fallbacks the index refers to). Every process on the image
     // used to parse ~1.2M entries, sort them and compare the result with the .idx (~300 ms each, 25+ per boot).
     // Training (AOT_BUILD / AOT_AUTOSAVE=1) keeps the full parse: a later save needs the reloc table.
-    const bool training = std::getenv("X86CODE_A64_AOT_BUILD") ||
-                          (std::getenv("X86CODE_A64_AOT_AUTOSAVE") && std::atoi(std::getenv("X86CODE_A64_AOT_AUTOSAVE")) == 1);
-    if (mapped && lazy && !training && !(std::getenv("X86CODE_A64_AOT_FASTLOAD") && std::atoi(std::getenv("X86CODE_A64_AOT_FASTLOAD")) == 0)) {
+    const bool training = std::getenv("X86SIM_A64_AOT_BUILD") ||
+                          (std::getenv("X86SIM_A64_AOT_AUTOSAVE") && std::atoi(std::getenv("X86SIM_A64_AOT_AUTOSAVE")) == 1);
+    if (mapped && lazy && !training && !(std::getenv("X86SIM_A64_AOT_FASTLOAD") && std::atoi(std::getenv("X86SIM_A64_AOT_FASTLOAD")) == 0)) {
         fastmem_patch_info.clear();
         if (MapStaticIndex(map_path + ".idx", begin)) {
             const u64 skip = hdr.n_blocks * 24 + hdr.n_relocs * 8 + hdr.n_fastmem * sizeof(FastmemPersist) +
@@ -1490,7 +1490,7 @@ size_t A64EmitX64::LoadPersistentCache(const std::string& path, const u8 cache_u
         }
         // Pool lives in the writable prelude (allocated before PreludeComplete); safe to fill now.
         code.RestoreConstantPool(pool_bytes.data(), static_cast<size_t>(hdr.const_pool_used));
-        if (std::getenv("X86CODE_A64_JITCACHE_DEBUG")) {
+        if (std::getenv("X86SIM_A64_JITCACHE_DEBUG")) {
             std::fprintf(stderr, "a64jitcache: restored const_pool %llu bytes\n",
                          static_cast<unsigned long long>(hdr.const_pool_used));
         }
@@ -1550,7 +1550,7 @@ size_t A64EmitX64::LoadPersistentCache(const std::string& path, const u8 cache_u
         }
         fm_bound++;
         // Abort stub shape: call wrapped_fn; <resume>. Patch E8 rel32 immediately before resume.
-        // x86Code RAM 3: only for a site with an out-of-line stub. An unchecked site (no stub) resumes right after its
+        // x86Sim RAM 3: only for a site with an out-of-line stub. An unchecked site (no stub) resumes right after its
         // own load/store, so the 5 bytes before resume are that instruction (a 0xE8 there is e.g. the disp8 of
         // [rax-0x18]): never patch inside it. A stub lies after the block body: resume - fault > 15 (the longest x86
         // instruction), and the old call target is a fallback in the prelude.
@@ -1572,7 +1572,7 @@ size_t A64EmitX64::LoadPersistentCache(const std::string& path, const u8 cache_u
             }
         }
     }
-    if (std::getenv("X86CODE_A64_JITCACHE_DEBUG")) {
+    if (std::getenv("X86SIM_A64_JITCACHE_DEBUG")) {
         std::fprintf(stderr, "a64jitcache: rebound %zu/%zu fastmem sites (abort-call patched %zu)\n",
                      fm_bound, fm_entries.size(), fm_call_patched);
     }
@@ -1582,10 +1582,10 @@ size_t A64EmitX64::LoadPersistentCache(const std::string& path, const u8 cache_u
 
     size_t loaded = 0;
     reloc_entries.assign(relocs.begin(), relocs.end());  // keep for a later re-save under the new bases
-    // Optional diagnostic: X86CODE_A64_JITCACHE_SKIP_RANGE=lo-hi skips registering blocks in
+    // Optional diagnostic: X86SIM_A64_JITCACHE_SKIP_RANGE=lo-hi skips registering blocks in
     // [lo, hi) so they retranslate fresh (e.g. to bisect a bad translation).
     u64 skip_lo = 0, skip_hi = 0;
-    if (const char* sk = std::getenv("X86CODE_A64_JITCACHE_SKIP_RANGE")) {
+    if (const char* sk = std::getenv("X86SIM_A64_JITCACHE_SKIP_RANGE")) {
         std::sscanf(sk, "%llx-%llx", &skip_lo, &skip_hi);
     }
     // block_ranges is for IC invalidation only; cover a single guest insn (4 bytes). Using host
@@ -1605,7 +1605,7 @@ size_t A64EmitX64::LoadPersistentCache(const std::string& path, const u8 cache_u
         sb.erase(std::unique(sb.begin(), sb.end(), [](const auto& a, const auto& b) { return a.desc == b.desc; }), sb.end());
         std::vector<StaticImage::Link> sl;
         sl.reserve(links.size());
-        // x86Code Perf 1c: PushRSB's `mov rcx, imm64` sites (MOV_RCX, 10 bytes) too. They were left out here (the
+        // x86Sim Perf 1c: PushRSB's `mov rcx, imm64` sites (MOV_RCX, 10 bytes) too. They were left out here (the
         // non-lazy path below keeps them), so no RSB push site of the image was ever linked, even to a block of the
         // image: every return in image code reached its return site through the dispatcher (cold Settings: tens of
         // millions of C++ lookups; since Perf 1b through the fast dispatch handler's table probe).
@@ -1678,7 +1678,7 @@ size_t A64EmitX64::LoadPersistentCache(const std::string& path, const u8 cache_u
         CodePtr site = begin + l.site_off;
         patch_information.Add(IR::LocationDescriptor{l.target}, static_cast<PatchInformation::Kind>(l.kind), site);
     }
-    if (!lazy && !std::getenv("X86CODE_A64_JITCACHE_NOLINK")) {
+    if (!lazy && !std::getenv("X86SIM_A64_JITCACHE_NOLINK")) {
         code.EnableWriting();
         for (const auto& [desc, bd] : block_descriptors) {
             if (patch_information.count(desc)) {
@@ -1688,7 +1688,7 @@ size_t A64EmitX64::LoadPersistentCache(const std::string& path, const u8 cache_u
         }
         code.DisableWriting();
     }
-    if (std::getenv("X86CODE_A64_JITCACHE_DEBUG")) {
+    if (std::getenv("X86SIM_A64_JITCACHE_DEBUG")) {
         std::fprintf(stderr, "a64jitcache: %zu link sites, %zu target blocks linked, %s, fm calls patched %zu\n", links.size(),
                      linked, mapped ? "mapped" : "copied", fm_call_patched);
     }
@@ -1700,7 +1700,7 @@ size_t A64EmitX64::LoadPersistentCache(const std::string& path, const u8 cache_u
         if (wfd >= 0) {
             const u64 len = end_u64 - floor_u;
             u64 done = 0;
-            // x86Code Speed 19: all-zero 64 KB pieces (slot headroom, ~40% of the image) become holes: a sparse file
+            // x86Sim Speed 19: all-zero 64 KB pieces (slot headroom, ~40% of the image) become holes: a sparse file
             // that reads back the same
             constexpr u64 kPiece = 64 * 1024;
             static const u8 kZero[kPiece] = {};
@@ -1826,7 +1826,7 @@ void A64EmitX64::PublishStaticIndex(const std::string& idx_path, std::vector<Fas
                          std::memcmp(mm + o_blocks, static_image.blocks, h.n_blocks * sizeof(StaticImage::Block)) != 0,
                          std::memcmp(mm + o_links, static_image.links, h.n_links * sizeof(StaticImage::Link)) != 0,
                          std::memcmp(mm + o_fm, fm.data(), fm.size() * sizeof(FastmemTable::StaticEntry)) != 0);
-            if (const char* d = std::getenv("X86CODE_A64_IDX_DUMP")) {
+            if (const char* d = std::getenv("X86SIM_A64_IDX_DUMP")) {
                 if (FILE* w = std::fopen((std::string(d) + "/idx." + std::to_string(getpid())).c_str(), "wb")) {
                     std::fwrite(&h, sizeof h, 1, w);
                     std::fwrite(cbs.data(), 8, cbs.size(), w);
@@ -1913,7 +1913,7 @@ std::string A64EmitX64::MemoryReport() const {
                   mb(reloc_entries.capacity() * sizeof(RelocEntry)), mb(lf_map.MemoryBytes()), mb(sl_map.MemoryBytes()),
                   static_image.n_blocks, static_image.registered, static_image.dead.size() * 64, static_image.n_links,
                   fastmem_patch_info.static_size(), static_image.map ? "mapped" : (static_image.active ? "private" : "off"));
-    // x86Code RAM 3: fastmem faults (unchecked accesses with a tagged / out-of-range address, read-only pages)
+    // x86Sim RAM 3: fastmem faults (unchecked accesses with a tagged / out-of-range address, read-only pages)
     std::string r = buf;
     std::vector<std::pair<u64, u64>> top;
     for (const auto& [rip, n] : fault_sites) {
@@ -1964,11 +1964,11 @@ bool A64EmitX64::InvalidateCacheRanges(const boost::icl::interval_set<u64>& rang
             }
         }
     }
-    // X86CODE_A64_INVAL_DEBUG=<path prefix> (debug): blocks found per range invalidation, to <prefix>.<pid>
-    if (static const bool dbg = std::getenv("X86CODE_A64_INVAL_DEBUG") != nullptr; dbg) {
+    // X86SIM_A64_INVAL_DEBUG=<path prefix> (debug): blocks found per range invalidation, to <prefix>.<pid>
+    if (static const bool dbg = std::getenv("X86SIM_A64_INVAL_DEBUG") != nullptr; dbg) {
         size_t known = 0;
         for (const auto& l : locations) known += block_descriptors.count(l);
-        static FILE* df = std::fopen((std::string(std::getenv("X86CODE_A64_INVAL_DEBUG")) + "." + std::to_string(getpid())).c_str(), "a");
+        static FILE* df = std::fopen((std::string(std::getenv("X86SIM_A64_INVAL_DEBUG")) + "." + std::to_string(getpid())).c_str(), "a");
         if (df) {
             std::fprintf(df, "a64 invalidate: %zu ranges [%#llx..] -> %zu locations, %zu registered\n", ranges.iterative_size(),
                          ranges.empty() ? 0ull : static_cast<unsigned long long>(boost::icl::first(*ranges.begin())), locations.size(), known);
@@ -1999,16 +1999,16 @@ A64EmitX64::FastDispatchEntry* A64EmitX64::FastDispatchSlot(u64 location_descrip
 }
 
 bool A64EmitX64::GetBlockFillsFastDispatch() {
-    // Speed 9: on by default (X86CODE_A64_GETBLOCK_FD=0 turns it off). Speed 7/8's cold-boot crashes with it were the
+    // Speed 9: on by default (X86SIM_A64_GETBLOCK_FD=0 turns it off). Speed 7/8's cold-boot crashes with it were the
     // probe's torn 16-byte read (see FastDispatchLoad16). It changes the dispatcher's miss path (prelude size), so an
     // AOT image only loads in processes with the same setting.
-    static const bool on = !(std::getenv("X86CODE_A64_GETBLOCK_FD") && std::atoi(std::getenv("X86CODE_A64_GETBLOCK_FD")) == 0);
+    static const bool on = !(std::getenv("X86SIM_A64_GETBLOCK_FD") && std::atoi(std::getenv("X86SIM_A64_GETBLOCK_FD")) == 0);
     return on;
 }
 
-// x86Code Speed 9: one 16-byte access each, in asm. clang compiled _mm_load_si128 + the two extracts into two 8-byte
+// x86Sim Speed 9: one 16-byte access each, in asm. clang compiled _mm_load_si128 + the two extracts into two 8-byte
 // loads (key, then code): when another thread refilled the same slot in between, the probe matched location A's key
-// and returned block B's code (X86CODE_A64_GETBLOCK_FD_VERIFY found swapped pairs; the guest jumped into the heap or
+// and returned block B's code (X86SIM_A64_GETBLOCK_FD_VERIFY found swapped pairs; the guest jumped into the heap or
 // got NULL back: the Speed 7/8 GetBlock probe crashes).
 static inline __m128i FastDispatchLoad16(const void* p) {
     __m128i v;
@@ -2037,7 +2037,7 @@ void A64EmitX64::ClearFastDispatchTable() {
     if (!conf.HasOptimization(OptimizationFlag::FastDispatch)) {
         return;
     }
-    // x86Code: keys are stored inverted (empty = all-zero bytes), so a clear drops the pages instead of writing 4 MB
+    // x86Sim: keys are stored inverted (empty = all-zero bytes), so a clear drops the pages instead of writing 4 MB
     // per process; a concurrent reader sees either the old entry or zeros (a miss).
     madvise(fast_dispatch_table.data(), fast_dispatch_table_size * sizeof(FastDispatchEntry), MADV_DONTNEED);
 }
@@ -2517,7 +2517,7 @@ void A64EmitX64::EmitA64CallSupervisor(A64EmitContext& ctx, IR::Inst* inst) {
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
     ASSERT(args[0].IsImmediate());
     const u32 imm = args[0].GetImmediateU32();
-    // x86Code Perf 8: a virtual call (see UserConfig::persist_svc_lo) keeps the block persistable
+    // x86Sim Perf 8: a virtual call (see UserConfig::persist_svc_lo) keeps the block persistable
     if (const u64 pc = ctx.Location().PC(); conf.persist_svc_hi && pc >= conf.persist_svc_lo && pc < conf.persist_svc_hi) {
         struct MemberFunctionPointer {
             u64 ptr;  // 1 + vtable offset for a virtual function
@@ -2543,7 +2543,7 @@ void A64EmitX64::EmitA64CallSupervisor(A64EmitContext& ctx, IR::Inst* inst) {
     EmitPinnedLoad();
     // The kernel would have to execute ERET to get here, which would clear exclusive state.
     code.mov(code.byte[r15 + offsetof(A64JitState, exclusive_state)], u8(0));
-    // x86Code: no PC=X30 rewrite here. The old one fired after every svc, including svcs not followed by a ret
+    // x86Sim: no PC=X30 rewrite here. The old one fired after every svc, including svcs not followed by a ret
     // (it skipped their code); that broke boot. Optional skip-ret lives in GuestThread::CallSVC.
 }
 
@@ -2693,9 +2693,9 @@ void A64EmitX64::EmitTerminalImpl(IR::Term::ReturnToDispatch, IR::LocationDescri
 }
 
 void A64EmitX64::EmitTerminalImpl(IR::Term::LinkBlock terminal, IR::LocationDescriptor initial_location, bool is_single_step) {
-    // x86Code Perf 9: a forward link (target above this block's start) skips the halt check. Any cycle of direct
+    // x86Sim Perf 9: a forward link (target above this block's start) skips the halt check. Any cycle of direct
     // links has a link whose target is at or below its block's start, and that one still checks, so a thread in a
-    // loop still sees HaltExecution (indirect branches never checked). X86CODE_A64_HALT_ALL=1 via conf: every link.
+    // loop still sees HaltExecution (indirect branches never checked). X86SIM_A64_HALT_ALL=1 via conf: every link.
     if (!conf.enable_cycle_counting && !conf.halt_check_all_links && !is_single_step &&
         conf.HasOptimization(OptimizationFlag::BlockLinking) &&
         A64::LocationDescriptor{terminal.next}.PC() > A64::LocationDescriptor{initial_location}.PC()) {
@@ -2765,7 +2765,7 @@ void A64EmitX64::EmitTerminalImpl(IR::Term::PopRSBHint, IR::LocationDescriptor, 
         return;
     }
 
-    // x86Code Perf 7: the shared pop handler's hit path inline, so every return site has its own indirect jump
+    // x86Sim Perf 7: the shared pop handler's hit path inline, so every return site has its own indirect jump
     // (the host's predictor keys on the jump's address: one shared `jmp rax` for every guest return mispredicted 39%
     // of the time, a third of all mispredicts in a cold Settings launch). Same steps as GenTerminalHandlers'
     // handler; a stale generation or a mismatch goes to the shared handlers, which do the rest as before.
@@ -2834,7 +2834,7 @@ void A64EmitX64::EmitTerminalImpl(IR::Term::CheckHalt terminal, IR::LocationDesc
     EmitTerminal(terminal.else_, initial_location, is_single_step);
 }
 
-// x86Code shared translations. A jg/jz/jmp site always holds its unlinked form (mov rax, pc; mov [r15+pc], rax;
+// x86Sim shared translations. A jg/jz/jmp site always holds its unlinked form (mov rax, pc; mov [r15+pc], rax;
 // jcc/jmp dispatcher; 23/22 bytes) and starts 8-byte aligned. Linking replaces only the first 8 bytes, atomically:
 // `jcc rel32; jmp short <site end>` or `jmp rel32`. A thread inside the site sees either head, and the tail it may
 // be executing never changes. kind: 0 jg, 1 jz, 2 jmp.

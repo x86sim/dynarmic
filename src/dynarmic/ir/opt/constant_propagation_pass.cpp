@@ -381,7 +381,7 @@ void FoldZeroExtendXToLong(IR::Inst& inst) {
 void ConstantPropagation(IR::Block& block) {
     for (auto& inst : block) {
         const auto opcode = inst.GetOpcode();
-        // x86Code: folding an op that has pseudo-ops (GetNZCVFromOp of ANDS/ADDS/... with an identity operand, e.g.
+        // x86Sim: folding an op that has pseudo-ops (GetNZCVFromOp of ANDS/ADDS/... with an identity operand, e.g.
         // "ands x0, x1, #-1") left GetNZCVFromOp on a value that can't provide flags (assert in IdentityRemovalPass)
         if (inst.HasAssociatedPseudoOperation()) {
             continue;

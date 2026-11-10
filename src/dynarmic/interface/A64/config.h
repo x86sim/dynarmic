@@ -93,7 +93,7 @@ struct UserCallbacks {
     virtual std::uint16_t MemoryRead16(VAddr vaddr) = 0;
     virtual std::uint32_t MemoryRead32(VAddr vaddr) = 0;
     virtual std::uint64_t MemoryRead64(VAddr vaddr) = 0;
-    /// x86Code: the current value of a 64-bit slot the code loads a branch target from (an import stub's GOT entry),
+    /// x86Sim: the current value of a 64-bit slot the code loads a branch target from (an import stub's GOT entry),
     /// or nullopt when it cannot be read safely. Used only for guarded direct links (A64StubLinkPass).
     virtual std::optional<std::uint64_t> MemoryReadConstant64(VAddr) { return std::nullopt; }
     virtual Vector MemoryRead128(VAddr vaddr) = 0;
@@ -260,7 +260,7 @@ struct UserConfig {
     /// relevant memory callback.
     /// This is only used if fastmem_pointer is set.
     bool silently_mirror_fastmem = true;
-    /// x86Code (RAM 3): the host checks the address range. With fastmem_pointer == 0 (guest address == host address)
+    /// x86Sim (RAM 3): the host checks the address range. With fastmem_pointer == 0 (guest address == host address)
     /// and fastmem_address_space_bits == 47 on x86-64, an address with any of bits 47-63 set is non-canonical (#GP) or
     /// kernel space: the access faults and the fastmem fault handler calls the callback. No inline check, no
     /// out-of-line stub, no r13 base (r13 becomes an allocatable register). Ignored when silently_mirror_fastmem.
@@ -297,35 +297,35 @@ struct UserConfig {
     // Maximum size is limited by the maximum length of a x86_64 / arm64 jump.
     size_t code_cache_size = 128 * 1024 * 1024;  // bytes
 
-    /// x86Code: the translation cache is shared by several Jits (one per thread) through Jit::MakeSharedCode.
+    /// x86Sim: the translation cache is shared by several Jits (one per thread) through Jit::MakeSharedCode.
     /// Emitted code then takes tpidr_el0/tpidrro_el0 and the exclusive monitor slot (processor_id) from the running
     /// Jit's state, the fast dispatch table and block links are updated with atomic stores, and code is never freed
     /// while the process runs (invalidation only unlinks blocks). callbacks must not depend on which Jit runs.
     bool shared_translations = false;
 
-    /// x86Code: an "svc; ret" thunk block skips PushRSB and ends in FastDispatchHint (not PopRSBHint, which is
+    /// x86Sim: an "svc; ret" thunk block skips PushRSB and ends in FastDispatchHint (not PopRSBHint, which is
     /// ReturnFromRunCode with RSB off), so the ret block runs without leaving Run(). Frontend only.
     bool fuse_svc_ret = false;
 
-    /// x86Code: import stubs link directly to their GOT slot's current target, guarded (A64StubLinkPass).
+    /// x86Sim: import stubs link directly to their GOT slot's current target, guarded (A64StubLinkPass).
     bool link_import_stubs = false;
 
-    /// x86Code Perf 8: blocks starting in [persist_svc_lo, persist_svc_hi) call CallSVC through the callbacks object's
+    /// x86Sim Perf 8: blocks starting in [persist_svc_lo, persist_svc_hi) call CallSVC through the callbacks object's
     /// vtable (`this` relocated, no host function address embedded), so an svc thunk block there can be persisted.
     /// The embedder guarantees the code there is the same in every process (the libsystem stub dylibs).
     std::uint64_t persist_svc_lo = 0, persist_svc_hi = 0;
 
-    /// x86Code Perf 14: guest registers kept in host r12, r13, r14, rbp across blocks (0-30: Xn, 31: SP, 32: NZCV;
+    /// x86Sim Perf 14: guest registers kept in host r12, r13, r14, rbp across blocks (0-30: Xn, 31: SP, 32: NZCV;
     /// -1: none).
     /// Stored to / loaded from the JitState around everything that reads guest registers from C++ (svc, exceptions,
     /// the interpreter, memory fallbacks, every exit to the dispatcher's caller) and loaded on RunCode entry.
     std::array<std::int8_t, 4> pinned_regs{-1, -1, -1, -1};
 
-    /// x86Code Perf 9: when false, a LinkBlock to a higher PC than its block's start does not check halt_reason (the
+    /// x86Sim Perf 9: when false, a LinkBlock to a higher PC than its block's start does not check halt_reason (the
     /// backward links of every cycle still do).
     bool halt_check_all_links = false;
 
-    /// x86Code: when non-zero, the block at this guest PC is emitted as a hand-written x86 objc_msgSend
+    /// x86Sim: when non-zero, the block at this guest PC is emitted as a hand-written x86 objc_msgSend
     /// cache probe (no A64 translate, no CallSVC). Hits FastDispatch to the IMP; misses go to uncached.
     std::uint64_t inline_objc_msgsend = 0;
     std::uint64_t inline_objc_uncached = 0;

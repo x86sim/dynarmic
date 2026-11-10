@@ -165,7 +165,7 @@ template<>
     const size_t unused_top_bits = 64 - ctx.conf.fastmem_address_space_bits;
 
     if (FastmemUnchecked(ctx.conf)) {
-        // x86Code RAM 3: the hardware checks (non-canonical -> #GP -> fastmem fault handler). r13 is a free register
+        // x86Sim RAM 3: the hardware checks (non-canonical -> #GP -> fastmem fault handler). r13 is a free register
         // here; a block whose accesses faulted often gets the inline check (A64EmitX64::OnFastmemFault).
         if (ctx.checked_memory) {
             if (!tmp) {
@@ -217,7 +217,7 @@ template<>
 
 template<std::size_t bitsize>
 const void* EmitReadMemoryMov(BlockOfCode& code, int value_idx, const Xbyak::RegExp& addr, bool ordered) {
-    // x86Code: ordered (acquire) reads up to 64 bits are plain loads. x86 loads already have acquire semantics, and
+    // x86Sim: ordered (acquire) reads up to 64 bits are plain loads. x86 loads already have acquire semantics, and
     // ordered writes are xchg (a full barrier), so STLR -> LDAR stays ordered. The locked "xadd 0" this used to be is
     // a write cycle: LDAR/LDAPR on read-only pages (constant CFStrings and objc data in __DATA_CONST) faulted and went
     // through the fastmem fallback once per location.
@@ -358,7 +358,7 @@ const void* EmitWriteMemoryMov(BlockOfCode& code, const Xbyak::RegExp& addr, int
     return fastmem_location;
 }
 
-// x86Code: with shared translations the running thread's monitor slots come from its A64JitState.
+// x86Sim: with shared translations the running thread's monitor slots come from its A64JitState.
 template<typename UserConfig>
 bool SharedTranslations(const UserConfig& conf) {
     if constexpr (requires { conf.shared_translations; }) {
@@ -374,7 +374,7 @@ void EmitExclusiveLock(BlockOfCode& code, const UserConfig& conf, Xbyak::Reg64 p
         return;
     }
 
-    // x86Code: shared translations load the lock from JitState so the Imm64 is not baked into
+    // x86Sim: shared translations load the lock from JitState so the Imm64 is not baked into
     // persistable blocks (warm ASLR would leave a stale host pointer → MAPERR on ldxr/stxr).
     if (SharedTranslations(conf)) {
         code.mov(pointer, qword[r15 + offsetof(A64JitState, excl_lock_ptr)]);

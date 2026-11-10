@@ -442,7 +442,7 @@ void A64EmitX64::EmitCheckMemoryAbort(A64EmitContext&, IR::Inst* inst, Xbyak::La
 
 }  // namespace Dynarmic::Backend::X64
 
-// ---- LSE atomics (designgears/x86code) --------------------------------------------------------------------------
+// ---- LSE atomics (designgears/x86sim) --------------------------------------------------------------------------
 // Inline lock-prefixed x86 on the fastmem address (r13 + vaddr). x86 locked RMWs are full barriers, so the
 // acquire/release variants need nothing extra. Without fastmem, a non-atomic callback fallback is used.
 

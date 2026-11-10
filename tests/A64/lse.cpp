@@ -1,4 +1,4 @@
-/* LSE / RCPC / RCPC2 tests (designgears/x86code). Each instruction runs on the fastmem path (inline lock-prefixed
+/* LSE / RCPC / RCPC2 tests (designgears/x86sim). Each instruction runs on the fastmem path (inline lock-prefixed
  * x86) and on the callback fallback, and is checked against a reference model.
  * SPDX-License-Identifier: 0BSD
  */

@@ -22,35 +22,35 @@ class Jit final {
 public:
     explicit Jit(UserConfig conf);
 
-    /// x86Code: one translation cache (code, block map, fast dispatch table) shared by several Jits, e.g. one per
+    /// x86Sim: one translation cache (code, block map, fast dispatch table) shared by several Jits, e.g. one per
     /// host thread of a process. conf.shared_translations must be set; conf.callbacks must be thread-agnostic.
     struct SharedCode;
     static std::shared_ptr<SharedCode> MakeSharedCode(UserConfig conf);
     /// A Jit with its own guest state over a shared translation cache. Of conf only processor_id, tpidr_el0 and
     /// tpidrro_el0 are used (they are per-thread); everything else comes from the shared cache's config.
     Jit(UserConfig conf, std::shared_ptr<SharedCode> shared);
-    /// x86Code: translation statistics of a shared cache (profiling).
+    /// x86Sim: translation statistics of a shared cache (profiling).
     struct SharedStats {
         std::uint64_t blocks = 0, guest_instructions = 0, code_bytes = 0, translate_ns = 0, lookups = 0;
-        /// x86Code Perf 1 (X86CODE_A64_PROFILE only): GetBlock calls, of them from the emitted dispatcher's miss path
+        /// x86Sim Perf 1 (X86SIM_A64_PROFILE only): GetBlock calls, of them from the emitted dispatcher's miss path
         /// (LookupBlockThunk), and where they were answered (per-thread L0, FastDispatch probe, lock-free map)
         std::uint64_t getblock = 0, thunk = 0, l0_hits = 0, probe_hits = 0, lf_hits = 0;
     };
     static SharedStats GetSharedStats(const SharedCode& shared);
-    /// x86Code Perf 1 (X86CODE_A64_PROFILE): the guest PCs looked up most through the dispatcher's C++ path, (count, pc)
+    /// x86Sim Perf 1 (X86SIM_A64_PROFILE): the guest PCs looked up most through the dispatcher's C++ path, (count, pc)
     static std::vector<std::pair<std::uint64_t, std::uint64_t>> TopThunkTargets(std::size_t n, bool callers = false);
-    /// x86Code RAM 4: runs fn(arg) with the shared emitter lock held (every write to translated code, including the
+    /// x86Sim RAM 4: runs fn(arg) with the shared emitter lock held (every write to translated code, including the
     /// AOT image's link sites, happens under it): libarm64jit drops page-table entries of clean image pages.
     static void WithSharedLock(SharedCode& shared, void (*fn)(void*), void* arg);
-    /// x86Code Speed 31: descriptors of the blocks this process translated itself (not the image's), persistable ones
+    /// x86Sim Speed 31: descriptors of the blocks this process translated itself (not the image's), persistable ones
     /// with a guest PC in [lo, hi) (training feedback from processes that run on the AOT image).
     static std::vector<std::uint64_t> GetDynamicDescriptors(SharedCode& shared, std::uint64_t lo, std::uint64_t hi);
-    /// x86Code RAM 2 (JIT): descriptors of the AOT image's blocks this process has run (registered on lookup), guest PC
+    /// x86Sim RAM 2 (JIT): descriptors of the AOT image's blocks this process has run (registered on lookup), guest PC
     /// in [lo, hi): with GetDynamicDescriptors, everything the process used (the .live training file's aging).
     static std::vector<std::uint64_t> GetUsedImageDescriptors(SharedCode& shared, std::uint64_t lo, std::uint64_t hi);
-    /// x86Code: host memory held by the shared emitter's maps (memlog; takes the shared lock).
+    /// x86Sim: host memory held by the shared emitter's maps (memlog; takes the shared lock).
     static std::string GetMemoryReport(SharedCode& shared);
-    /// x86Code: dump translated blocks whose guest PC is in [cache_lo, cache_hi) to path.
+    /// x86Sim: dump translated blocks whose guest PC is in [cache_lo, cache_hi) to path.
     /// Keyed by cache_uuid (16 bytes) + build_id. Returns bytes written, or 0 on failure.
     static std::size_t SavePersistentCache(SharedCode& shared, const std::string& path,
                                            const std::uint8_t cache_uuid[16], std::uint64_t build_id,
@@ -59,21 +59,21 @@ public:
     static std::size_t LoadPersistentCache(SharedCode& shared, const std::string& path,
                                            const std::uint8_t cache_uuid[16], std::uint64_t build_id,
                                            std::uint64_t cache_lo, std::uint64_t cache_hi, bool shared_image = false);
-    /// x86Code: place the next code cache at this address if free (shared AOT image: same layout in every process).
+    /// x86Sim: place the next code cache at this address if free (shared AOT image: same layout in every process).
     static void SetCodeCacheAddress(std::uint64_t address);
-    /// x86Code RAM 13: page of host-call stubs (RWX, 16 bytes per stub) every CallFunction goes through.
+    /// x86Sim RAM 13: page of host-call stubs (RWX, 16 bytes per stub) every CallFunction goes through.
     static void SetHostCallStubs(void* base, std::size_t bytes);
-    /// x86Code: FastDispatch table entries (power of two, 4K-1M) for emitters created after this call.
+    /// x86Sim: FastDispatch table entries (power of two, 4K-1M) for emitters created after this call.
     static void SetFastDispatchEntries(std::size_t n);
-    /// x86Code: AOT. Location descriptors of the blocks in a saved cache (empty on mismatch or failure).
+    /// x86Sim: AOT. Location descriptors of the blocks in a saved cache (empty on mismatch or failure).
     /// build_id 0 accepts any build (the hot set outlives codegen changes; only the image UUID must match).
     static std::vector<std::uint64_t> ReadPersistentDescriptors(const std::string& path,
                                                                 const std::uint8_t cache_uuid[16],
                                                                 std::uint64_t build_id);
-    /// x86Code: AOT. Translate the block at a location descriptor without running it.
+    /// x86Sim: AOT. Translate the block at a location descriptor without running it.
     void Pretranslate(std::uint64_t location_descriptor);
 
-    /// x86Code Speed 18 (chunked AOT image). Translate a block and append its direct successors (link targets, call
+    /// x86Sim Speed 18 (chunked AOT image). Translate a block and append its direct successors (link targets, call
     /// return addresses); false if it was already translated.
     bool PretranslateCollect(std::uint64_t location_descriptor, std::vector<std::uint64_t>& successors);
     /// Drop every registered block and emit from this offset (from the code begin) on.
@@ -145,7 +145,7 @@ public:
     void SetPC(std::uint64_t value);
 
     /// Read general-purpose register.
-    /// x86Code Perf 1e: where the guest registers live (fixed for the Jit's lifetime): the native-call boundary reads
+    /// x86Sim Perf 1e: where the guest registers live (fixed for the Jit's lifetime): the native-call boundary reads
     /// and writes them directly instead of one out-of-line accessor call per register (~28 per native call).
     struct StatePointers {
         std::uint64_t* reg;  // x0..x30

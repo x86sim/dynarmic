@@ -12,7 +12,7 @@ bool TranslatorVisitor::FCSEL_float(Imm<2> type, Vec Vm, Cond cond, Vec Vn, Vec 
     if (!datasize) {
         return UnallocatedEncoding();
     }
-    if (*datasize == 16) {  // x86Code: FEAT_FP16: select the bits
+    if (*datasize == 16) {  // x86Sim: FEAT_FP16: select the bits
         const IR::U32 a = ir.ZeroExtendToWord(V_scalar(16, Vn)), b = ir.ZeroExtendToWord(V_scalar(16, Vm));
         V_scalar(16, Vd, ir.LeastSignificantHalf(ir.ConditionalSelect(cond, a, b)));
         return true;

@@ -1075,7 +1075,7 @@ static void EmitFPRound(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst, siz
     const bool exact = inst->GetArg(2).GetU1();
     const auto round_imm = ConvertRoundingModeToX64Immediate(rounding_mode);
 
-    // x86Code Speed 34: every mode inline (FRINTA / FRINTX were software calls); see emit_x64_frint.h.
+    // x86Sim Speed 34: every mode inline (FRINTA / FRINTX were software calls); see emit_x64_frint.h.
     (void)round_imm;
     if (fsize != 16 && code.HasHostFeature(HostFeature::SSE41) && (fsize == 32 || code.HasHostFeature(HostFeature::SSE42))) {
         if (fsize == 64) {
@@ -1637,7 +1637,7 @@ static void EmitFPToFixed(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst) {
         // cvttsd2si truncates during operation so rounding (and thus SSE4.1) not required
         const bool truncating = rounding_mode == FP::RoundingMode::TowardsZero;
 
-        // x86Code Speed 34: FCVTAS / FCVTAU (ties away) inline as well (emit_x64_frint.h; IXC kept: exact form).
+        // x86Sim Speed 34: FCVTAS / FCVTAU (ties away) inline as well (emit_x64_frint.h; IXC kept: exact form).
         const bool tie_away = rounding_mode == FP::RoundingMode::ToNearest_TieAwayFromZero && code.HasHostFeature(HostFeature::SSE41) && (fsize == 32 || code.HasHostFeature(HostFeature::SSE42));
 
         if ((round_imm && (truncating || code.HasHostFeature(HostFeature::SSE41))) || tie_away) {

@@ -1,27 +1,27 @@
 [submodule "biscuit"]
 	path = externals/biscuit
-	url = https://github.com/x86code/biscuit.git
+	url = https://github.com/x86sim/biscuit.git
 [submodule "catch"]
 	path = externals/catch
-	url = https://github.com/x86code/Catch2.git
+	url = https://github.com/x86sim/Catch2.git
 [submodule "fmt"]
 	path = externals/fmt
-	url = https://github.com/x86code/fmt.git
+	url = https://github.com/x86sim/fmt.git
 [submodule "mcl"]
 	path = externals/mcl
-	url = https://github.com/x86code/mcl.git
+	url = https://github.com/x86sim/mcl.git
 [submodule "oaknut"]
 	path = externals/oaknut
-	url = https://github.com/x86code/oaknut.git
+	url = https://github.com/x86sim/oaknut.git
 [submodule "robin-map"]
 	path = externals/robin-map
-	url = https://github.com/x86code/robin-map.git
+	url = https://github.com/x86sim/robin-map.git
 [submodule "xbyak"]
 	path = externals/xbyak
-	url = https://github.com/x86code/xbyak.git
+	url = https://github.com/x86sim/xbyak.git
 [submodule "zycore"]
 	path = externals/zycore
-	url = https://github.com/x86code/zycore-c.git
+	url = https://github.com/x86sim/zycore-c.git
 [submodule "zydis"]
 	path = externals/zydis
-	url = https://github.com/x86code/zydis.git
+	url = https://github.com/x86sim/zydis.git

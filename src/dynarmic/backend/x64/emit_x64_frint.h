@@ -1,4 +1,4 @@
-/* x86Code Speed 34: inline FRINTA / FRINTX for the x64 backend (scalar and vector, 32/64-bit).
+/* x86Sim Speed 34: inline FRINTA / FRINTX for the x64 backend (scalar and vector, 32/64-bit).
  * SPDX-License-Identifier: 0BSD
  */
 #pragma once

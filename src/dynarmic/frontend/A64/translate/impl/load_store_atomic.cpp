@@ -1,5 +1,5 @@
 /* This file is part of the dynarmic project.
- * Copyright (c) 2026 designgears (x86Code)
+ * Copyright (c) 2026 designgears (x86Sim)
  * SPDX-License-Identifier: 0BSD
  *
  * ARMv8.1 LSE (LD<op>, SWP, CAS, CASP), ARMv8.3 RCPC (LDAPR) and ARMv8.4 RCPC2 (LDAPUR*, STLUR).

@@ -14,7 +14,7 @@ bool FPCompare(TranslatorVisitor& v, Imm<2> type, Vec Vm, Cond cond, Vec Vn, Imm
     }
     const u32 flags = nzcv.ZeroExtend<u32>() << 28;
 
-    // x86Code: FEAT_FP16 compares in binary32 (exact)
+    // x86Sim: FEAT_FP16 compares in binary32 (exact)
     const IR::U32U64 operand1 = *datasize == 16 ? IR::U32U64(FP16ToSingle(v, Vn)) : IR::U32U64(v.V_scalar(*datasize, Vn));
     const IR::U32U64 operand2 = *datasize == 16 ? IR::U32U64(FP16ToSingle(v, Vm)) : IR::U32U64(v.V_scalar(*datasize, Vm));
 

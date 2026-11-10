@@ -435,7 +435,7 @@ void RegAlloc::HostCall(IR::Inst* result_def,
                         std::optional<Argument::copyable_reference> arg1,
                         std::optional<Argument::copyable_reference> arg2,
                         std::optional<Argument::copyable_reference> arg3) {
-    // x86Code: mark the A64 block non-persistable (HostCall embeds ASLR-sensitive host pointers).
+    // x86Sim: mark the A64 block non-persistable (HostCall embeds ASLR-sensitive host pointers).
     if (host_call_flag) {
         *host_call_flag = true;
     }
@@ -654,7 +654,7 @@ void RegAlloc::SpillRegister(HostLoc loc) {
     ASSERT_MSG(!LocInfo(loc).IsEmpty(), "There is no need to spill unoccupied registers");
     ASSERT_MSG(!LocInfo(loc).IsLocked(), "Registers that have been allocated must not be spilt");
 
-    // x86Code Perf 5: a GPR value that has to make room goes to a free callee-saved register of the block's order
+    // x86Sim Perf 5: a GPR value that has to make room goes to a free callee-saved register of the block's order
     // (never displaced by a HostCall, so it does not bounce) before a stack slot. Upstream always spilled to the
     // stack: translated code used ~6 of the 14 allocatable GPRs, with a store + reload around every scratch use of a
     // value that is still needed (3% of the image's instructions address spill slots).

@@ -51,7 +51,7 @@ bool TranslatorVisitor::STP_LDP_gen(Imm<2> opc, bool not_postindex, bool wback, 
         break;
     }
     case IR::MemOp::LOAD: {
-        // x86Code: high half first. On arm64 an aligned 16-byte LDP/STP is single-copy atomic (LSE2) and objc relies
+        // x86Sim: high half first. On arm64 an aligned 16-byte LDP/STP is single-copy atomic (LSE2) and objc relies
         // on it (bucket_t {imp, sel}: stp writer, ldp readers in msgSend/cache_getImp). Emulated as two 8-byte
         // accesses, STP stores low then high; under x86 TSO a reader that loads high then low can never pair a new
         // high (sel) with a stale low (imp), which made threads jump to `0 ^ class` on a racing cache insert.

@@ -1,4 +1,4 @@
-/* x86Code: compact fault-rip -> fastmem fallback table (was tsl::robin_map<u64, {u64, u64}>, 32 B/bucket at 50% load:
+/* x86Sim: compact fault-rip -> fastmem fallback table (was tsl::robin_map<u64, {u64, u64}>, 32 B/bucket at 50% load:
  * 128 MB for SpringBoard's 1.7M sites). Entries are 8 bytes: the fault rip as an offset from the first rip seen, the
  * distance to the resume rip, and an index into a small table of distinct callbacks. Appends arrive almost in order
  * (code is emitted linearly); lookups (fastmem faults, rare) binary-search the sorted prefix and scan the short tail,
@@ -44,7 +44,7 @@ public:
         entries.push_back(e);
     }
 
-    // x86Code (Speed 7): sites of a static AOT image (sorted by off from static_base; cb indexes static_callbacks),
+    // x86Sim (Speed 7): sites of a static AOT image (sorted by off from static_base; cb indexes static_callbacks),
     // usually in a file mapped shared by every process with the same layout. Searched after the dynamic entries.
     struct StaticEntry {
         u32 off;

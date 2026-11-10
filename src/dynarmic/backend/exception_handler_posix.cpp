@@ -124,7 +124,7 @@ SigHandler::~SigHandler() {
     std::free(signal_stack_memory);
 }
 
-// x86Code: lock-free copy of the registered code ranges for IsJitCodeAddress (async-signal-safe: no mutex, no alloc).
+// x86Sim: lock-free copy of the registered code ranges for IsJitCodeAddress (async-signal-safe: no mutex, no alloc).
 constexpr size_t kMaxRanges = 16;
 std::atomic<u64> range_lo[kMaxRanges], range_hi[kMaxRanges];
 

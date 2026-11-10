@@ -28,14 +28,14 @@ public:
 
     Xbyak::Address GetConstant(const Xbyak::AddressFrame& frame, u64 lower, u64 upper = 0);
 
-    /// x86Code: persistent cache needs the pool bytes — JIT blocks RIP-reference them from the
+    /// x86Sim: persistent cache needs the pool bytes — JIT blocks RIP-reference them from the
     /// prelude, and a warm process only fills slots used by GenRunCode (Emit slots stay zero).
     const u8* Data() const { return reinterpret_cast<const u8*>(pool.data()); }
     size_t TotalBytes() const { return pool.size_bytes(); }
     size_t UsedBytes() const { return insertion_point * align_size; }
     /// Overwrite pool[0..used) and bump insertion_point so later GetConstant won't clobber.
     void Restore(const u8* data, size_t used_bytes);
-    /// x86Code Speed 18: put the next new constant at this byte offset (never backwards).
+    /// x86Sim Speed 18: put the next new constant at this byte offset (never backwards).
     void SetInsertionOffset(size_t bytes) { if (bytes / align_size > insertion_point) insertion_point = bytes / align_size; }
 
 private:

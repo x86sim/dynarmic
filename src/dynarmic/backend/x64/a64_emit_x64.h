@@ -24,7 +24,7 @@
 
 namespace Dynarmic::Backend::X64 {
 
-// x86Code RAM 3: see A64::UserConfig::fastmem_unchecked
+// x86Sim RAM 3: see A64::UserConfig::fastmem_unchecked
 inline bool FastmemUnchecked(const A64::UserConfig& conf) {
     return conf.fastmem_unchecked && conf.fastmem_pointer && *conf.fastmem_pointer == 0 && !conf.silently_mirror_fastmem
         && conf.fastmem_address_space_bits == 47;
@@ -52,9 +52,9 @@ struct A64EmitContext final : public EmitContext {
     }
 
     const A64::UserConfig& conf;
-    /// x86Code: set when the block emits a HostCall (CallSVC, etc.); those blocks are not persisted.
+    /// x86Sim: set when the block emits a HostCall (CallSVC, etc.); those blocks are not persisted.
     bool has_host_call = false;
-    /// x86Code RAM 3: unchecked fastmem, but this block's accesses faulted often: emit the inline check here.
+    /// x86Sim RAM 3: unchecked fastmem, but this block's accesses faulted often: emit the inline check here.
     bool checked_memory = false;
 };
 
@@ -69,10 +69,10 @@ public:
      */
     BlockDescriptor Emit(IR::Block& block);
 
-    /// x86Code: emit a hand-written x86 objc_msgSend cache probe for conf.inline_objc_*.
+    /// x86Sim: emit a hand-written x86 objc_msgSend cache probe for conf.inline_objc_*.
     BlockDescriptor EmitInlineObjCMsgSend(IR::LocationDescriptor descriptor);
 
-    /// x86Code: persistent translation cache (dyld shared-cache blocks without host calls).
+    /// x86Sim: persistent translation cache (dyld shared-cache blocks without host calls).
     size_t SavePersistentCache(const std::string& path, const u8 cache_uuid[16], u64 build_id,
                                u64 cache_lo, u64 cache_hi);
     /// shared_image: map the code from a relocated, linked copy of the file (`<path>.<layout hash>.map`, written by the
@@ -82,7 +82,7 @@ public:
     std::vector<u64> DynamicDescriptors(u64 lo, u64 hi);  // Speed 31 (Jit::GetDynamicDescriptors)
     std::vector<u64> UsedImageDescriptors(u64 lo, u64 hi);  // RAM 2 (Jit::GetUsedImageDescriptors)
     static std::vector<u64> ReadPersistentDescriptors(const std::string& path, const u8 cache_uuid[16], u64 build_id);
-    /// x86Code Speed 18 (chunked AOT image): when set, Emit appends the block's direct successors (link targets, call
+    /// x86Sim Speed 18 (chunked AOT image): when set, Emit appends the block's direct successors (link targets, call
     /// return addresses) here, so a static builder can follow them.
     std::vector<u64>* aot_successors = nullptr;
     /// Save only the code from code_off on (one chunk's slot) as an "A64CK01" chunk file; offsets stay slab-absolute.
@@ -96,17 +96,17 @@ public:
 
     void ClearCache() override;
 
-    // x86code: true when any translated (or static-image) block was found in the ranges
+    // x86sim: true when any translated (or static-image) block was found in the ranges
     bool InvalidateCacheRanges(const boost::icl::interval_set<u64>& ranges);
 
-    /// x86Code Speed 8 (shared translations): GetBlock's FastDispatch probe (one atomic 16-byte read of the entry the
+    /// x86Sim Speed 8 (shared translations): GetBlock's FastDispatch probe (one atomic 16-byte read of the entry the
     /// dispatcher would use) and fill (only with the shared mutex held).
     CodePtr FastDispatchProbe(u64 location_descriptor) const;
     void FastDispatchFill(u64 location_descriptor, CodePtr code_ptr);
-    /// Default on (Speed 9); X86CODE_A64_GETBLOCK_FD=0: the old way (the dispatcher's miss path fills).
+    /// Default on (Speed 9); X86SIM_A64_GETBLOCK_FD=0: the old way (the dispatcher's miss path fills).
     static bool GetBlockFillsFastDispatch();
 
-    // x86Code: with shared_translations, guards the block map, patch/fastmem info and emission.
+    // x86Sim: with shared_translations, guards the block map, patch/fastmem info and emission.
     std::recursive_mutex shared_mutex;
 
     struct PersistEntry {
@@ -114,10 +114,10 @@ public:
         CodePtr entrypoint;
         size_t size;
     };
-    /// x86Code: approximate host bytes held by the emitter's maps, one "name MB" list for memlog.
+    /// x86Sim: approximate host bytes held by the emitter's maps, one "name MB" list for memlog.
     std::string MemoryReport() const;
 
-    /// x86Code: emitter-recorded relocation for absolute host Imm64 embeds (AOT stage 4 precursor).
+    /// x86Sim: emitter-recorded relocation for absolute host Imm64 embeds (AOT stage 4 precursor).
     /// On load: *(u64*)(code_begin + offset) += new_base[kind] - old_base[kind].
     enum class RelocKind : u8 {
         CodeBegin = 0,          // JIT translated-code slab (GetCodeBegin)
@@ -146,17 +146,17 @@ protected:
     BlockRangeInformation<u64> block_ranges;
 
     struct FastDispatchEntry {
-        u64 location_descriptor = 0;  // x86Code: stored inverted (~desc), so all-zero memory is an empty entry
+        u64 location_descriptor = 0;  // x86Sim: stored inverted (~desc), so all-zero memory is an empty entry
         const void* code_ptr = nullptr;
     };
     static_assert(sizeof(FastDispatchEntry) == 0x10);
-    // x86Code: 64K entries (1 MB) instead of 1M (16 MB, all touched when cleared): there is one Jit per guest thread
-    // x86Code: 256K entries (4 MB); 64K thrashed with 175K-750K-block hot sets (SpringBoard startup: ~35% in GetBlock).
-    // x86Code Speed 7: set per process before the emitter exists (SetFastDispatchEntries): 64K for daemons.
+    // x86Sim: 64K entries (1 MB) instead of 1M (16 MB, all touched when cleared): there is one Jit per guest thread
+    // x86Sim: 256K entries (4 MB); 64K thrashed with 175K-750K-block hot sets (SpringBoard startup: ~35% in GetBlock).
+    // x86Sim Speed 7: set per process before the emitter exists (SetFastDispatchEntries): 64K for daemons.
     const size_t fast_dispatch_table_size = NextFastDispatchEntries();
     const u64 fast_dispatch_table_mask = (fast_dispatch_table_size - 1) << 4;
     static size_t NextFastDispatchEntries();
-    // x86Code: mapped right after the code cache (a fixed address relative to it, so code that embeds the table's
+    // x86Sim: mapped right after the code cache (a fixed address relative to it, so code that embeds the table's
     // address is identical in processes with the same code cache address: shared AOT image). 16-byte atomic entries.
     struct FastDispatchStorage {
         explicit FastDispatchStorage(BlockOfCode& code);
@@ -168,16 +168,16 @@ protected:
         void fill(const FastDispatchEntry& v) { std::fill(begin(), end(), v); }
         FastDispatchEntry* table;
     } fast_dispatch_table{code};
-    // x86Code shared translations: original first 8 bytes of each unlinked jg/jz/jmp patch site
+    // x86Sim shared translations: original first 8 bytes of each unlinked jg/jz/jmp patch site
     void EmitSharedPatchSite(int kind, const IR::LocationDescriptor& target_desc, CodePtr target_code_ptr);
     void WriteSharedLinkHead(int kind, CodePtr site, const IR::LocationDescriptor& target_desc, CodePtr target_code_ptr);
     // The first 8 bytes of an unlinked site: `mov rax, imm64` (48 B8) and the low 6 bytes of the target PC
-    // (x86Code Speed 6: computed instead of kept in a site -> head map, 48 MB for SpringBoard).
+    // (x86Sim Speed 6: computed instead of kept in a site -> head map, 48 MB for SpringBoard).
     static u64 UnlinkedHead(const IR::LocationDescriptor& target_desc) {
         return 0xB848u | (A64::LocationDescriptor{target_desc}.PC() << 16);
     }
     void ClearFastDispatchTable();
-    // x86Code Perf 14: pinned guest registers (UserConfig::pinned_regs) in r12/r13/r14
+    // x86Sim Perf 14: pinned guest registers (UserConfig::pinned_regs) in r12/r13/r14
     static size_t GuestRegOffset(int guest) {
         return guest == 32 ? offsetof(A64JitState, cpsr_nzcv) : guest == 31 ? offsetof(A64JitState, sp) : offsetof(A64JitState, reg) + sizeof(u64) * static_cast<size_t>(guest);
     }
@@ -208,7 +208,7 @@ protected:
 
     const void* terminal_handler_pop_rsb_hint;
     const void* terminal_handler_fast_dispatch_hint = nullptr;
-    // x86Code Perf 1: the code pointer of an RSB entry whose target is not linked (not translated yet, or a site in
+    // x86Sim Perf 1: the code pointer of an RSB entry whose target is not linked (not translated yet, or a site in
     // the mapped AOT image, whose sites are only linked at load to blocks of the image). It was ReturnFromRunCode:
     // the dispatcher's C++ LookupBlock on every such return, even when the RSB predicted it (cold Settings: ~77M
     // lookups, 99.96% from there; e.g. _xpc_dictionary_insert's two return sites 5.4M each). The fast dispatch
@@ -239,16 +239,16 @@ protected:
 
     // Fastmem information
     using DoNotFastmemMarker = std::tuple<IR::LocationDescriptor, unsigned>;
-    // x86Code: keep the fault→fallback map to two u64s. The marker/recompile flag live in a
+    // x86Sim: keep the fault→fallback map to two u64s. The marker/recompile flag live in a
     // side map that stays empty when recompile_on_fastmem_failure is false (our default),
     // shrinking ~1.5M-entry bucket storage from ~224 MB (56 B/entry) to ~128 MB (32 B/entry).
     FastmemTable fastmem_patch_info;
-    // x86Code RAM 3 (under the fastmem callback's lock): fastmem faults; fault rip -> count; blocks retranslated with
+    // x86Sim RAM 3 (under the fastmem callback's lock): fastmem faults; fault rip -> count; blocks retranslated with
     // the inline address check after one of their sites faulted kCheckAfterFaults times (unchecked fastmem only).
     u64 fastmem_faults = 0;
     std::map<u64, u64> fault_sites;
     tsl::robin_set<u64> checked_blocks;
-    // x86Code Perf 1d: the image block containing a host address, without a scan of every block (OnFastmemFault).
+    // x86Sim Perf 1d: the image block containing a host address, without a scan of every block (OnFastmemFault).
     // The image's blocks are sorted by guest PC and a library's blocks share a slot of the code, so consecutive groups
     // of kStaticGroup blocks span narrow code ranges: [lo, hi) per group, built on first use (~1.6K groups, 26 KB).
     // A block containing the address belongs to a group whose range contains it, so only those groups are scanned.

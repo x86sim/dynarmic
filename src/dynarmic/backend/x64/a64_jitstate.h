@@ -50,7 +50,7 @@ struct A64JitState {
     static constexpr u64 RESERVATION_GRANULE_MASK = 0xFFFF'FFFF'FFFF'FFF0ull;
     u8 exclusive_state = 0;
 
-    // x86Code Perf 6: 32 (was 8). Swift/ObjC call chains are deeper than 8: every return past the eighth level
+    // x86Sim Perf 6: 32 (was 8). Swift/ObjC call chains are deeper than 8: every return past the eighth level
     // missed and went through the fast dispatch probe (~15% of SpringBoard during an app launch in the handlers).
     static constexpr size_t RSBSize = 32;  // MUST be a power of 2.
     static constexpr size_t RSBPtrMask = RSBSize - 1;
@@ -76,7 +76,7 @@ struct A64JitState {
         return pc_u64 | fpcr_u64;
     }
 
-    // x86Code: per-thread values that a shared translation cache (UserConfig::shared_translations) cannot bake into
+    // x86Sim: per-thread values that a shared translation cache (UserConfig::shared_translations) cannot bake into
     // the code: TPIDR_EL0/TPIDRRO_EL0 locations and this thread's exclusive monitor slots.
     std::uint64_t* tpidr_el0_ptr = nullptr;
     const std::uint64_t* tpidrro_el0_ptr = nullptr;
@@ -86,12 +86,12 @@ struct A64JitState {
     // instead of baking ASLR-sensitive Imm64s (warm MAPERR on ldxr/stxr lock word).
     void* excl_lock_ptr = nullptr;
     void* excl_addresses_base = nullptr;  // ExclusiveMonitor::exclusive_addresses.data()
-    // x86Code: with Unsafe_IgnoreGlobalMonitor and shared translations, excl_address_ptr/excl_value_ptr point here: a
+    // x86Sim: with Unsafe_IgnoreGlobalMonitor and shared translations, excl_address_ptr/excl_value_ptr point here: a
     // reservation private to this thread (processor_id is a counter mod the monitor size, so monitor slots can be
     // shared by two threads, and without the lock one thread's STXR could compare against the other's LDXR value)
     alignas(16) std::uint64_t own_excl_value[2]{};
     std::uint64_t own_excl_address = 0;
-    // x86Code Speed 25: return stack buffer under shared translations. Another thread's Invalidate/ClearCache bumps
+    // x86Sim Speed 25: return stack buffer under shared translations. Another thread's Invalidate/ClearCache bumps
     // the shared invalidate_gen (*invalidate_gen_ptr); a pop whose rsb_gen differs drops this thread's entries and
     // takes the FastDispatch path, so a stale code pointer is never jumped to (the same check-then-jump window as a
     // FastDispatch entry).

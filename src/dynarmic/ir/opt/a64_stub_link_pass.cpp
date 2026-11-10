@@ -14,7 +14,7 @@
 
 namespace Dynarmic::Optimization {
 
-// x86Code: cross-library import stubs (adrp x16, got@PAGE; ldr x16, [x16, got@PAGEOFF]; br x16) end in an indirect
+// x86Sim: cross-library import stubs (adrp x16, got@PAGE; ldr x16, [x16, got@PAGEOFF]; br x16) end in an indirect
 // jump, so every call through one is a FastDispatch lookup. After constant propagation the target is a 64-bit load
 // from a constant address. When the embedder can read that slot now (UserCallbacks::MemoryReadConstant64: the
 // shared cache's bound GOTs), the block keeps the load and the jump to it, and links directly to the value it read,

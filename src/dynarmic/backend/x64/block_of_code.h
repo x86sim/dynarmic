@@ -33,19 +33,19 @@ struct RunCodeCallbacks {
     std::unique_ptr<Callback> AddTicks;
     std::unique_ptr<Callback> GetTicksRemaining;
     bool enable_cycle_counting;
-    // x86Code Perf 14: emitted where RunCode returns to its caller (stores pinned guest registers)
+    // x86Sim Perf 14: emitted where RunCode returns to its caller (stores pinned guest registers)
     std::function<void(BlockOfCode&)> exit_hook;
 };
 
-/// x86Code: the next BlockOfCode is placed at this address when that range is free (shared AOT image).
+/// x86Sim: the next BlockOfCode is placed at this address when that range is free (shared AOT image).
 void SetNextCodeCacheAddress(u64 address);
-/// x86Code RAM 13: a fixed-address page of host-call stubs (16 bytes each: jmp [rip+2]; int3 x2; u64 target) placed
+/// x86Sim RAM 13: a fixed-address page of host-call stubs (16 bytes each: jmp [rip+2]; int3 x2; u64 target) placed
 /// next to the code cache. CallFunction always emits `call rel32` to a stub, so translated code (the prelude the AOT
 /// image's blocks jump into) never depends on how far the host library is: the cache only needs reach to the stubs.
 void SetHostCallStubs(void* base, size_t bytes);
 /// Stub address for a host function, 0 when no stub page is set, it is full, or it is out of rel32 reach of `from`.
 u64 HostCallStub(u64 target, u64 from);
-void SetFastDispatchEntries(size_t n);  // x86Code: entries (power of two) of FastDispatch tables made after this
+void SetFastDispatchEntries(size_t n);  // x86Sim: entries (power of two) of FastDispatch tables made after this
 
 class BlockOfCode final : public Xbyak::CodeGenerator {
 public:
@@ -104,7 +104,7 @@ public:
             address = stub;
         }
         const u64 distance = address - (getCurr<u64>() + 5);
-        // x86Code: a call into host code (rel32 or abs64) bakes this process's ASLR layout into the block.
+        // x86Sim: a call into host code (rel32 or abs64) bakes this process's ASLR layout into the block.
         if (call_flag) {
             *call_flag = true;
         }
@@ -118,7 +118,7 @@ public:
         }
     }
 
-    /// x86Code: while set (A64 block emission), CallFunction marks *flag so the persistent cache skips the block
+    /// x86Sim: while set (A64 block emission), CallFunction marks *flag so the persistent cache skips the block
     /// (FP/vector fallbacks, NaN handlers etc. call host functions without going through RegAlloc::HostCall).
     void SetCallFlag(bool* flag) { call_flag = flag; }
 
@@ -157,7 +157,7 @@ public:
     CodePtr GetCodeBegin() const;
     size_t GetTotalCodeSize() const;
 
-    /// x86Code: constant-pool snapshot for persistent JIT cache (RIP targets in prelude).
+    /// x86Sim: constant-pool snapshot for persistent JIT cache (RIP targets in prelude).
     const u8* GetConstantPoolData() const { return constant_pool.Data(); }
     size_t GetConstantPoolUsedBytes() const { return constant_pool.UsedBytes(); }
     size_t GetConstantPoolTotalBytes() const { return constant_pool.TotalBytes(); }
@@ -177,7 +177,7 @@ public:
     /// Allocate memory of `size` bytes from the same block of memory the code is in.
     /// This is useful for objects that need to be placed close to or within code.
     /// The lifetime of this memory is the same as the code around it.
-    /// x86code: zero = false skips the memset (memory not written since it was mapped is already zero).
+    /// x86sim: zero = false skips the memset (memory not written since it was mapped is already zero).
     void* AllocateFromCodeSpace(size_t size, bool zero = true);
 
     void SetCodePtr(CodePtr code_ptr);

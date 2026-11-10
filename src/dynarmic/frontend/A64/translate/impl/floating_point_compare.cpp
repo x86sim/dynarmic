@@ -13,7 +13,7 @@ bool FPCompare(TranslatorVisitor& v, Imm<2> type, Vec Vm, Vec Vn, bool exc_on_qn
         return v.UnallocatedEncoding();
     }
 
-    const size_t size = *datasize == 16 ? 32 : *datasize;  // x86Code: FEAT_FP16 compares in binary32 (exact)
+    const size_t size = *datasize == 16 ? 32 : *datasize;  // x86Sim: FEAT_FP16 compares in binary32 (exact)
     const IR::U32U64 operand1 = *datasize == 16 ? IR::U32U64(FP16ToSingle(v, Vn)) : IR::U32U64(v.V_scalar(*datasize, Vn));
     IR::U32U64 operand2;
     if (cmp_with_zero) {

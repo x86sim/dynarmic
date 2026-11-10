@@ -48,7 +48,7 @@ bool TranslatorVisitor::FSQRT_float(Imm<2> type, Vec Vn, Vec Vd) {
     if (!datasize) {
         return UnallocatedEncoding();
     }
-    if (*datasize == 16) {  // x86Code: FEAT_FP16 via binary32
+    if (*datasize == 16) {  // x86Sim: FEAT_FP16 via binary32
         SingleToFP16(*this, Vd, ir.FPSqrt(FP16ToSingle(*this, Vn)));
         return true;
     }

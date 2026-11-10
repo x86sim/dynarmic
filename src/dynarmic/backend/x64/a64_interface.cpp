@@ -36,10 +36,10 @@
 
 namespace Dynarmic::A64 {
 
-// x86Code Speed 31 (debug): X86CODE_A64_LIVE_BINS=<file>: live translations binned by guest PC (dyld cache, placed
+// x86Sim Speed 31 (debug): X86SIM_A64_LIVE_BINS=<file>: live translations binned by guest PC (dyld cache, placed
 // Mach-Os in the cache window's top, anything else = unplaced app / plug-in code), rewritten every 256 blocks.
 static void LiveBin(u64 pc, size_t insns, size_t bytes) {
-    static const char* path = getenv("X86CODE_A64_LIVE_BINS");
+    static const char* path = getenv("X86SIM_A64_LIVE_BINS");
     if (!path) return;
     static std::atomic<u64> n[3][3];
     const int b = pc >= 0x1c0000000ull && pc < 0x2ac000000ull ? 0 : pc >= 0x2ac000000ull && pc < 0x2c0000000ull ? 1 : 2;
@@ -64,7 +64,7 @@ static RunCodeCallbacks GenRunCodeCallbacks(A64::UserCallbacks* cb, CodePtr (*Lo
         std::make_unique<ArgCallback>(Devirtualize<&A64::UserCallbacks::AddTicks>(cb)),
         std::make_unique<ArgCallback>(Devirtualize<&A64::UserCallbacks::GetTicksRemaining>(cb)),
         conf.enable_cycle_counting,
-        [conf](BlockOfCode& code) {  // x86Code Perf 14: pinned guest registers back to the JitState
+        [conf](BlockOfCode& code) {  // x86Sim Perf 14: pinned guest registers back to the JitState
             for (size_t i = 0; i < 4; i++) {
                 if (const int g = conf.pinned_regs[i]; g >= 0) {
                     const Xbyak::Reg64 h = i == 0 ? code.r12 : i == 1 ? code.r13 : i == 2 ? code.r14 : code.rbp;
@@ -87,7 +87,7 @@ static std::function<void(BlockOfCode&)> GenRCP(const A64::UserConfig& conf) {
         if (conf.fastmem_pointer) {
             code.mov(code.r13, *conf.fastmem_pointer);
         }
-        for (size_t i = 0; i < 4; i++) {  // x86Code Perf 14: pinned guest registers from the JitState
+        for (size_t i = 0; i < 4; i++) {  // x86Sim Perf 14: pinned guest registers from the JitState
             if (const int g = conf.pinned_regs[i]; g >= 0) {
                 const Xbyak::Reg64 h = i == 0 ? code.r12 : i == 1 ? code.r13 : i == 2 ? code.r14 : code.rbp;
                 if (g == 32) {
@@ -107,7 +107,7 @@ static Optimization::PolyfillOptions GenPolyfillOptions(const BlockOfCode& code)
     };
 }
 
-// x86Code: the translation side of a Jit (code, block map, emitter, fast dispatch table). A plain Jit owns one; with
+// x86Sim: the translation side of a Jit (code, block map, emitter, fast dispatch table). A plain Jit owns one; with
 // UserConfig::shared_translations several Jits (threads) share one. The dispatcher's block lookup finds the running
 // Jit through a thread_local (t_running), so the emitted code does not depend on which Jit runs it.
 struct Jit::SharedCode final {
@@ -226,7 +226,7 @@ public:
     }
 
     HaltReason Run() {
-        // x86code: Run may be re-entered from a callback (a native function calling back into guest code on the same
+        // x86sim: Run may be re-entered from a callback (a native function calling back into guest code on the same
         // thread). The caller saves and restores the guest state around the nested run. Code may only be freed at the
         // outermost level: the outer run is still inside a block. A nested run passes cache invalidation requests on.
         const bool nested = run_depth > 0;
@@ -320,7 +320,7 @@ public:
         const auto range = boost::icl::discrete_interval<u64>::closed(start_address, end_address);
         if (conf.shared_translations) {
             std::unique_lock lock{shared->mutex()};
-            // x86code: bump the generation (every thread drops its whole RSB on its next return) only when a block was
+            // x86sim: bump the generation (every thread drops its whole RSB on its next return) only when a block was
             // actually unlinked. JavaScriptCore calls sys_icache_invalidate for every code write and patch (thousands
             // per page load), mostly on freshly written code that was never translated: no RSB entry can point there.
             // Bumped after the unlink, still under the lock, so a thread seeing the new gen also sees the unlinked blocks.
@@ -478,7 +478,7 @@ private:
         // other threads can still LookupBlock/Emit. A concurrent Invalidate bumps invalidate_gen; if it
         // changed while we translated, discard the IR and retry (the map may already have a fresh block).
         std::unique_lock lock{shared->mutex(), std::defer_lock};
-        // x86Code Speed 8: FastDispatch first (re-entry from the run loop after native calls: ~15% of Preferences went
+        // x86Sim Speed 8: FastDispatch first (re-entry from the run loop after native calls: ~15% of Preferences went
         // to the lf_map path), then the lock-free map, then the locked path. Entries are only ever written with the
         // shared mutex held, which every invalidation also holds: a thread that invalidated code it just wrote can
         // never find the old block here afterwards (Speed 7's lock-free fill could put one back: iconservicesagent and
@@ -516,7 +516,7 @@ private:
                     }
                     return ep;
                 }
-                // X86CODE_A64_GETBLOCK_FD_VERIFY=1 (debug): check every probe hit against the map under the mutex.
+                // X86SIM_A64_GETBLOCK_FD_VERIFY=1 (debug): check every probe hit against the map under the mutex.
                 lock.lock();
                 const auto block = emitter.GetBasicBlock(current_location);
                 const CodePtr want = block ? block->entrypoint : nullptr;
@@ -584,7 +584,7 @@ private:
 
             // JIT Compile (unlocked when shared): MemoryReadCode must not need the shared mutex.
             const auto get_code = [this](u64 vaddr) { return conf.callbacks->MemoryReadCode(vaddr); };
-            // x86Code: hand-written objc_msgSend probe (no IR translate / no CallSVC).
+            // x86Sim: hand-written objc_msgSend probe (no IR translate / no CallSVC).
             if (conf.inline_objc_msgsend != 0) {
                 const A64::LocationDescriptor want{current_location};
                 if (want.PC() == conf.inline_objc_msgsend && !want.SingleStepping()) {
@@ -694,13 +694,13 @@ private:
     size_t run_depth = 0;
     u64 rsb_invalidate_gen = 0;  // last shared->invalidate_gen we ResetRSB'd for
 
-    // x86Code Perf 1: a small direct-mapped cache in front of FastDispatchProbe, one per Jit (= per guest thread, so
+    // x86Sim Perf 1: a small direct-mapped cache in front of FastDispatchProbe, one per Jit (= per guest thread, so
     // no locking). GetBlock runs on every re-entry from the run loop (each native call returns through it) and on the
     // emitted dispatcher's misses; the shared FastDispatch table is megabytes of hashed slots, so ~half of the probe's
     // time was the load of a cold slot (11% of a cold Settings launch in the probe alone). The return sites of native
     // calls repeat, so a few KB per thread holds them. Tagged with shared->invalidate_gen (the RSB's lock-free check):
     // every invalidation bumps it, so the cache is dropped before any lookup after one, as the probe's own guarantee
-    // (a thread that invalidated code never finds the old block afterwards). X86CODE_A64_GETBLOCK_L0=0 turns it off.
+    // (a thread that invalidated code never finds the old block afterwards). X86SIM_A64_GETBLOCK_L0=0 turns it off.
     struct L0Entry {
         u64 desc;
         CodePtr ep;
@@ -708,13 +708,13 @@ private:
     static constexpr size_t kL0 = 256;
     std::array<L0Entry, kL0> l0{};
     u64 l0_gen = ~0ull;
-    const bool l0_on = !(std::getenv("X86CODE_A64_GETBLOCK_L0") && std::atoi(std::getenv("X86CODE_A64_GETBLOCK_L0")) == 0);
+    const bool l0_on = !(std::getenv("X86SIM_A64_GETBLOCK_L0") && std::atoi(std::getenv("X86SIM_A64_GETBLOCK_L0")) == 0);
     L0Entry& L0Slot(u64 desc) { return l0[((desc >> 2) ^ (desc >> 11)) & (kL0 - 1)]; }
 
 public:
-    // Perf 1: GetBlock path counters in SharedStats, only with X86CODE_A64_PROFILE (relaxed atomic adds)
+    // Perf 1: GetBlock path counters in SharedStats, only with X86SIM_A64_PROFILE (relaxed atomic adds)
     static bool PerfCounters() {
-        static const bool on = std::getenv("X86CODE_A64_PROFILE") != nullptr;
+        static const bool on = std::getenv("X86SIM_A64_PROFILE") != nullptr;
         return on;
     }
     static void Count(u64& c) { __atomic_fetch_add(&c, 1, __ATOMIC_RELAXED); }
@@ -732,10 +732,10 @@ private:
     BlockOfCode& block_of_code;
     A64EmitX64& emitter;
     const Optimization::PolyfillOptions& polyfill_options;
-    // x86Code Speed 8: GetBlock probes/fills FastDispatch (default on since Speed 9; X86CODE_A64_GETBLOCK_FD=0 off). Declared after
+    // x86Sim Speed 8: GetBlock probes/fills FastDispatch (default on since Speed 9; X86SIM_A64_GETBLOCK_FD=0 off). Declared after
     // conf (it reads it).
     const bool fd_fill = conf.HasOptimization(OptimizationFlag::FastDispatch) && A64EmitX64::GetBlockFillsFastDispatch();
-    const bool fd_verify = std::getenv("X86CODE_A64_GETBLOCK_FD_VERIFY") != nullptr;
+    const bool fd_verify = std::getenv("X86SIM_A64_GETBLOCK_FD_VERIFY") != nullptr;
     struct FillRec {
         u64 desc;
         const void* code;
@@ -759,7 +759,7 @@ private:
 
 thread_local Jit::Impl* Jit::Impl::t_running __attribute__((tls_model("initial-exec"))) = nullptr;
 
-// Perf 1 (X86CODE_A64_PROFILE): which guest PCs reach the dispatcher's C++ lookup, approximately (racy counts in a
+// Perf 1 (X86SIM_A64_PROFILE): which guest PCs reach the dispatcher's C++ lookup, approximately (racy counts in a
 // fixed open-addressed table; a full table stops recording new PCs)
 namespace {
 constexpr size_t kThunkTop = 8192;

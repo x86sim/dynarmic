@@ -149,7 +149,7 @@ public:
 
     void EmitVerboseDebuggingOutput();
 
-    /// x86Code: when set, HostCall marks *host_call_flag so A64 persistable-cache can exclude the block.
+    /// x86Sim: when set, HostCall marks *host_call_flag so A64 persistable-cache can exclude the block.
     void SetHostCallFlag(bool* flag) { host_call_flag = flag; }
 
 private:

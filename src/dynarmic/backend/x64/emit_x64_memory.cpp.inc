@@ -102,7 +102,7 @@ void AxxEmitX64::EmitMemoryRead(AxxEmitContext& ctx, IR::Inst* inst) {
         const auto location = EmitReadMemoryMov<bitsize>(code, value_idx, src_ptr, ordered);
 
         if (!require_abort_handling && !conf.check_halt_on_memory_access) {
-            // x86Code RAM 3: no inline check, so no out-of-line stub: a fault calls the fallback and returns here.
+            // x86Sim RAM 3: no inline check, so no out-of-line stub: a fault calls the fallback and returns here.
             code.L(*end);
             end_bound = true;
             const u64 loc = mcl::bit_cast<u64>(location);
@@ -204,7 +204,7 @@ void AxxEmitX64::EmitMemoryWrite(AxxEmitContext& ctx, IR::Inst* inst) {
         const auto location = EmitWriteMemoryMov<bitsize>(code, dest_ptr, value_idx, ordered);
 
         if (!require_abort_handling && !conf.check_halt_on_memory_access) {
-            // x86Code RAM 3: no inline check, so no out-of-line stub: a fault calls the fallback and returns here.
+            // x86Sim RAM 3: no inline check, so no out-of-line stub: a fault calls the fallback and returns here.
             code.L(*end);
             end_bound = true;
             const u64 loc = mcl::bit_cast<u64>(location);

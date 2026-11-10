@@ -81,17 +81,17 @@ public:
     struct BlockDescriptor {
         CodePtr entrypoint;  // Entrypoint of emitted code
         u32 size;            // Length in bytes of emitted code
-        u32 persistable = 0; // x86Code: no host calls, may go to the persistent cache (was a separate vector)
+        u32 persistable = 0; // x86Sim: no host calls, may go to the persistent cache (was a separate vector)
     };
 
     explicit EmitX64(BlockOfCode& code);
     virtual ~EmitX64();
 
     /// Looks up an emitted host block in the cache.
-    /// x86Code: registers a static AOT image block on its first lookup (callers hold the emitter lock).
+    /// x86Sim: registers a static AOT image block on its first lookup (callers hold the emitter lock).
     std::optional<BlockDescriptor> GetBasicBlock(IR::LocationDescriptor descriptor);
 
-    /// x86Code: lock-free GetBasicBlock for the dispatcher hit path (shared translations: GetBasicBlock needs the
+    /// x86Sim: lock-free GetBasicBlock for the dispatcher hit path (shared translations: GetBasicBlock needs the
     /// shared mutex, this does not). nullptr = not known here; the caller falls back to the locked path.
     CodePtr LookupEntrypoint(IR::LocationDescriptor descriptor) const {
         const u64 k = descriptor.Value();
@@ -100,7 +100,7 @@ public:
         }
         return lf_map.Lookup(k);
     }
-    /// x86Code debug (GETBLOCK_FD_VERIFY): descriptor whose block starts at ep (block_descriptors, then the static
+    /// x86Sim debug (GETBLOCK_FD_VERIFY): descriptor whose block starts at ep (block_descriptors, then the static
     /// image); 0 if none. Linear; call only on a mismatch, with the shared mutex held.
     u64 OwnerOf(CodePtr ep) const;
 
@@ -126,7 +126,7 @@ protected:
     Xbyak::Label EmitCond(IR::Cond cond);
     BlockDescriptor RegisterBlock(const IR::LocationDescriptor& location_descriptor, CodePtr entrypoint, size_t size);
     void PushRSBHelper(Xbyak::Reg64 loc_desc_reg, Xbyak::Reg64 index_reg, IR::LocationDescriptor target);
-    // x86Code Perf 14: the guest NZCV (x64 flag layout) kept in a host register (UserConfig::pinned_regs entry 32)
+    // x86Sim Perf 14: the guest NZCV (x64 flag layout) kept in a host register (UserConfig::pinned_regs entry 32)
     std::optional<Xbyak::Reg32> nzcv_pinned;
 
     void EmitVerboseDebuggingOutput(RegAlloc& reg_alloc);
@@ -144,17 +144,17 @@ protected:
     virtual void EmitTerminalImpl(IR::Term::CheckHalt terminal, IR::LocationDescriptor initial_location, bool is_single_step) = 0;
 
     // Patching
-    // x86Code: one tagged vector instead of four std::vectors (96 B/value → 24 B).
+    // x86Sim: one tagged vector instead of four std::vectors (96 B/value → 24 B).
     // With ~1M pending link targets that cut the robin_map bucket array ~224 MB → ~80 MB.
     struct PatchInformation {
         enum Kind : u8 { JG = 0, JZ = 1, JMP = 2, MOV_RCX = 3 };
     };
-    // x86Code (Speed 6): link sites per target as singly linked lists in one pool: a robin_map target -> head (index+1)
+    // x86Sim (Speed 6): link sites per target as singly linked lists in one pool: a robin_map target -> head (index+1)
     // and 12 bytes per site (site pointer tagged with the kind in its top bits, next index). Was a robin_map of
     // std::vector (40 B buckets for every block ever registered, since Patch() used operator[]): SpringBoard 195 MB.
     class PatchTable {
     public:
-        // x86Code (Speed 11): robin hood probing stays short at 0.9; the default 0.5 left half of the 24 B buckets empty
+        // x86Sim (Speed 11): robin hood probing stays short at 0.9; the default 0.5 left half of the 24 B buckets empty
         PatchTable() { heads.max_load_factor(0.9f); }
         void Add(const IR::LocationDescriptor& target, PatchInformation::Kind kind, CodePtr site) {
             u32& head = heads[target.Value()];
@@ -192,7 +192,7 @@ protected:
         std::vector<u32, MetaAlloc<u32, kMetaLinks>> next;
     };
     void Patch(const IR::LocationDescriptor& target_desc, CodePtr target_code_ptr);
-    // x86Code: shared translations. Patch sites are aligned so a link/unlink is one atomic 8-byte store (other threads
+    // x86Sim: shared translations. Patch sites are aligned so a link/unlink is one atomic 8-byte store (other threads
     // may be executing the site); `patching` tells EmitPatch* whether it rewrites an existing site.
     bool atomic_patch_sites = false;
     bool patching = false;
@@ -208,7 +208,7 @@ protected:
     tsl::robin_map<IR::LocationDescriptor, BlockDescriptor, std::hash<IR::LocationDescriptor>, std::equal_to<IR::LocationDescriptor>,
                    MetaAlloc<std::pair<IR::LocationDescriptor, BlockDescriptor>, kMetaBlocks>>
         block_descriptors;
-    // x86Code: insert-only open-addressing mirror of block_descriptors (key -> entrypoint), written under the shared
+    // x86Sim: insert-only open-addressing mirror of block_descriptors (key -> entrypoint), written under the shared
     // mutex (single writer), read without it. Removal clears the code pointer and keeps the key, so probe chains stay
     // intact. A reader may get an entrypoint that is invalidated right after; the locked path had the same window.
     struct LockFreeBlockMap {
@@ -242,7 +242,7 @@ protected:
         static Table* Alloc(size_t n);
         static void Insert(Table* t, u64 k, CodePtr c);
     } lf_map;
-    // x86Code (Speed 15): registered AOT image blocks, in 8-byte slots (32-bit key fingerprint, image block index + 1,
+    // x86Sim (Speed 15): registered AOT image blocks, in 8-byte slots (32-bit key fingerprint, image block index + 1,
     // bit 31 = killed) instead of lf_map's 16-byte key/code entries: the full key is checked in the image's (shared,
     // file-backed) block table. SpringBoard / Maps / Preferences register 430-620K image blocks (lf_map was 16 MB of
     // anon in each). Same publication, growth and removal rules as lf_map; a killed slot keeps its chain.
@@ -281,7 +281,7 @@ protected:
     } sl_map;
     PatchTable patch_information;
 
-    // x86Code (Speed 7): the AOT image's metadata as sorted arrays, in a file mapped shared by every process with the
+    // x86Sim (Speed 7): the AOT image's metadata as sorted arrays, in a file mapped shared by every process with the
     // same layout (or private arrays). Was copied into block_descriptors/lf_map/patch_information/block_ranges/
     // fastmem for all ~1M blocks in every AOT process (~300 MB each). A block now goes into block_descriptors and
     // lf_map on its first lookup; link sites and PC ranges are queried here. Image-internal sites are linked in the
@@ -303,7 +303,7 @@ protected:
         size_t n_blocks = 0;
         const Link* links = nullptr;  // sorted by target
         size_t n_links = 0;
-        // x86Code (RAM 2): one bit per image block, in fresh anonymous zero pages instead of a zero-filled vector.
+        // x86Sim (RAM 2): one bit per image block, in fresh anonymous zero pages instead of a zero-filled vector.
         // assign() wrote every word (~0.5 MB per bitset per process for a 4.2M-block image, all private dirty);
         // here a page becomes resident only when a bit in it is set.
         struct ZeroBits {

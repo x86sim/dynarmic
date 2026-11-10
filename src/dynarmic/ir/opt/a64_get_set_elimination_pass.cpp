@@ -52,7 +52,7 @@ void A64GetSetElimination(IR::Block& block) {
         info.last_set_instruction = set_inst;
     };
 
-    // x86Code Perf 4: a W write followed by an X read of the same register (or X then W) is answered from the value
+    // x86Sim Perf 4: a W write followed by an X read of the same register (or X then W) is answered from the value
     // too: SetW zero-extends into the X register, and a W read is the low word of the X value. Arm64 code mixes the
     // two views of a register all the time; each miss was a store of the guest register to the JIT state and a load
     // back (a quarter of the image's instructions address the state).

@@ -1,5 +1,5 @@
-// x86Code (RAM 1): names anonymous mappings in /proc/<pid>/smaps ("[anon:a64:...]") for memory attribution
-// (tools/debug/memcat.py). RAM 2 (JIT): on by default (X86CODE_A64_VMANAME=0 off); was opt-in. Named mappings merge
+// x86Sim (RAM 1): names anonymous mappings in /proc/<pid>/smaps ("[anon:a64:...]") for memory attribution
+// (tools/debug/memcat.py). RAM 2 (JIT): on by default (X86SIM_A64_VMANAME=0 off); was opt-in. Named mappings merge
 // only with neighbours of the same name, and only the JIT's own few large mappings are named.
 #pragma once
 #include <cstddef>
@@ -9,7 +9,7 @@
 #include <sys/prctl.h>
 namespace Dynarmic {
 inline void NameVma(void* p, std::size_t len, const char* name) {
-    static const bool on = [] { const char* e = std::getenv("X86CODE_A64_VMANAME"); return !(e && std::atoi(e) == 0); }();
+    static const bool on = [] { const char* e = std::getenv("X86SIM_A64_VMANAME"); return !(e && std::atoi(e) == 0); }();
     if (on && p) {
         prctl(0x53564d41 /* PR_SET_VMA */, 0 /* PR_SET_VMA_ANON_NAME */, reinterpret_cast<unsigned long>(p), len, name);
     }

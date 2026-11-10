@@ -99,7 +99,7 @@ protected:
 
     // Fastmem information
     using DoNotFastmemMarker = std::tuple<IR::LocationDescriptor, unsigned>;
-    // x86Code: see a64_emit_x64.h — slim fastmem_patch_info, markers in a side map.
+    // x86Sim: see a64_emit_x64.h — slim fastmem_patch_info, markers in a side map.
     FastmemTable fastmem_patch_info;
     tsl::robin_map<u64, DoNotFastmemMarker> fastmem_recompile_markers;
     std::set<DoNotFastmemMarker> do_not_fastmem;

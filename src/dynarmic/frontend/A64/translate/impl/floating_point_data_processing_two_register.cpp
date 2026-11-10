@@ -12,7 +12,7 @@ bool TranslatorVisitor::FMUL_float(Imm<2> type, Vec Vm, Vec Vn, Vec Vd) {
     if (!datasize) {
         return UnallocatedEncoding();
     }
-    if (*datasize == 16) {  // x86Code: FEAT_FP16 via binary32 (exact for this operation)
+    if (*datasize == 16) {  // x86Sim: FEAT_FP16 via binary32 (exact for this operation)
         const IR::U32 a = FP16ToSingle(*this, Vn), b = FP16ToSingle(*this, Vm);
         SingleToFP16(*this, Vd, ir.FPMul(a, b));
         return true;
@@ -32,7 +32,7 @@ bool TranslatorVisitor::FDIV_float(Imm<2> type, Vec Vm, Vec Vn, Vec Vd) {
     if (!datasize) {
         return UnallocatedEncoding();
     }
-    if (*datasize == 16) {  // x86Code: FEAT_FP16 via binary32 (exact for this operation)
+    if (*datasize == 16) {  // x86Sim: FEAT_FP16 via binary32 (exact for this operation)
         const IR::U32 a = FP16ToSingle(*this, Vn), b = FP16ToSingle(*this, Vm);
         SingleToFP16(*this, Vd, ir.FPDiv(a, b));
         return true;
@@ -52,7 +52,7 @@ bool TranslatorVisitor::FADD_float(Imm<2> type, Vec Vm, Vec Vn, Vec Vd) {
     if (!datasize) {
         return UnallocatedEncoding();
     }
-    if (*datasize == 16) {  // x86Code: FEAT_FP16 via binary32 (exact for this operation)
+    if (*datasize == 16) {  // x86Sim: FEAT_FP16 via binary32 (exact for this operation)
         const IR::U32 a = FP16ToSingle(*this, Vn), b = FP16ToSingle(*this, Vm);
         SingleToFP16(*this, Vd, ir.FPAdd(a, b));
         return true;
@@ -72,7 +72,7 @@ bool TranslatorVisitor::FSUB_float(Imm<2> type, Vec Vm, Vec Vn, Vec Vd) {
     if (!datasize) {
         return UnallocatedEncoding();
     }
-    if (*datasize == 16) {  // x86Code: FEAT_FP16 via binary32 (exact for this operation)
+    if (*datasize == 16) {  // x86Sim: FEAT_FP16 via binary32 (exact for this operation)
         const IR::U32 a = FP16ToSingle(*this, Vn), b = FP16ToSingle(*this, Vm);
         SingleToFP16(*this, Vd, ir.FPSub(a, b));
         return true;
@@ -92,7 +92,7 @@ bool TranslatorVisitor::FMAX_float(Imm<2> type, Vec Vm, Vec Vn, Vec Vd) {
     if (!datasize) {
         return UnallocatedEncoding();
     }
-    if (*datasize == 16) {  // x86Code: FEAT_FP16 via binary32 (exact for this operation)
+    if (*datasize == 16) {  // x86Sim: FEAT_FP16 via binary32 (exact for this operation)
         const IR::U32 a = FP16ToSingle(*this, Vn), b = FP16ToSingle(*this, Vm);
         SingleToFP16(*this, Vd, ir.FPMax(a, b));
         return true;
@@ -112,7 +112,7 @@ bool TranslatorVisitor::FMIN_float(Imm<2> type, Vec Vm, Vec Vn, Vec Vd) {
     if (!datasize) {
         return UnallocatedEncoding();
     }
-    if (*datasize == 16) {  // x86Code: FEAT_FP16 via binary32 (exact for this operation)
+    if (*datasize == 16) {  // x86Sim: FEAT_FP16 via binary32 (exact for this operation)
         const IR::U32 a = FP16ToSingle(*this, Vn), b = FP16ToSingle(*this, Vm);
         SingleToFP16(*this, Vd, ir.FPMin(a, b));
         return true;
@@ -132,7 +132,7 @@ bool TranslatorVisitor::FMAXNM_float(Imm<2> type, Vec Vm, Vec Vn, Vec Vd) {
     if (!datasize) {
         return UnallocatedEncoding();
     }
-    if (*datasize == 16) {  // x86Code: FEAT_FP16 via binary32 (exact for this operation)
+    if (*datasize == 16) {  // x86Sim: FEAT_FP16 via binary32 (exact for this operation)
         const IR::U32 a = FP16ToSingle(*this, Vn), b = FP16ToSingle(*this, Vm);
         SingleToFP16(*this, Vd, ir.FPMaxNumeric(a, b));
         return true;
@@ -152,7 +152,7 @@ bool TranslatorVisitor::FMINNM_float(Imm<2> type, Vec Vm, Vec Vn, Vec Vd) {
     if (!datasize) {
         return UnallocatedEncoding();
     }
-    if (*datasize == 16) {  // x86Code: FEAT_FP16 via binary32 (exact for this operation)
+    if (*datasize == 16) {  // x86Sim: FEAT_FP16 via binary32 (exact for this operation)
         const IR::U32 a = FP16ToSingle(*this, Vn), b = FP16ToSingle(*this, Vm);
         SingleToFP16(*this, Vd, ir.FPMinNumeric(a, b));
         return true;
@@ -172,7 +172,7 @@ bool TranslatorVisitor::FNMUL_float(Imm<2> type, Vec Vm, Vec Vn, Vec Vd) {
     if (!datasize) {
         return UnallocatedEncoding();
     }
-    if (*datasize == 16) {  // x86Code: FEAT_FP16 via binary32 (exact for this operation)
+    if (*datasize == 16) {  // x86Sim: FEAT_FP16 via binary32 (exact for this operation)
         const IR::U32 a = FP16ToSingle(*this, Vn), b = FP16ToSingle(*this, Vm);
         SingleToFP16(*this, Vd, ir.FPNeg(ir.FPMul(a, b)));
         return true;

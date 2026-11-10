@@ -136,7 +136,7 @@ public:
         mode |= MAP_JIT;
 #    endif
 
-        // x86Code: a one-shot fixed address (SetNextCodeCacheAddress) so translations are byte-identical across
+        // x86Sim: a one-shot fixed address (SetNextCodeCacheAddress) so translations are byte-identical across
         // processes with the same layout (shared AOT image); falls back to anywhere when that range is taken.
         void* p = MAP_FAILED;
         if (const u64 hint = g_next_code_cache_address.exchange(0)) {

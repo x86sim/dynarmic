@@ -1685,7 +1685,7 @@ void EmitFPVectorRoundInt(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst) {
     const bool exact = inst->GetArg(2).GetU1();
 
     if constexpr (fsize != 16) {
-        // x86Code Speed 34: every mode inline (FRINTA / FRINTX were software calls); see emit_x64_frint.h.
+        // x86Sim Speed 34: every mode inline (FRINTA / FRINTX were software calls); see emit_x64_frint.h.
         if (code.HasHostFeature(HostFeature::SSE41) && (fsize == 32 || code.HasHostFeature(HostFeature::SSE42))) {
             EmitTwoOpVectorOperation<fsize, DefaultIndexer, 3>(code, ctx, inst, [&](const Xbyak::Xmm& result, const Xbyak::Xmm& xmm_a) {
                 const Xbyak::Xmm a = ctx.reg_alloc.ScratchXmm(), b = ctx.reg_alloc.ScratchXmm();
@@ -2004,7 +2004,7 @@ void EmitFPVectorToFixed(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst) {
     [[maybe_unused]] const bool fpcr_controlled = inst->GetArg(3).GetU1();
 
     if constexpr (fsize != 16) {
-        // x86Code Speed 34: FCVTAS / FCVTAU (ties away) inline as well (emit_x64_frint.h).
+        // x86Sim Speed 34: FCVTAS / FCVTAU (ties away) inline as well (emit_x64_frint.h).
         const bool tie_away = rounding == FP::RoundingMode::ToNearest_TieAwayFromZero;
         if (code.HasHostFeature(HostFeature::SSE41) && (!tie_away || fsize == 32 || code.HasHostFeature(HostFeature::SSE42))) {
             auto args = ctx.reg_alloc.GetArgumentInfo(inst);
