@@ -1104,7 +1104,7 @@ bool BuildHugeCopy(const std::string& map_path, int mfd, const std::string& hp, 
 // Speed 35: starts a64hugecopy MAP HP unless a fresh HP.building marker says one runs. A raw clone without CLONE_VM
 // and with no exit signal: the guest gets no SIGCHLD and its wait4(-1) never sees the child (only __WCLONE does);
 // a64hugecopy forks the copy away at once, so the wait here is short.
-void SpawnHugeCopy(const std::string& map_path, const std::string& hp) {
+void SpawnHugeCopy(const std::string& map_path, const std::string& hp, u64 pad) {
     struct stat ks {};
     if (stat((hp + ".building").c_str(), &ks) == 0 && time(nullptr) - ks.st_mtime < 300) {
         return;
@@ -1118,7 +1118,8 @@ void SpawnHugeCopy(const std::string& map_path, const std::string& hp) {
     if (access(helper.c_str(), X_OK) != 0) {
         return;
     }
-    const char* argv[] = {helper.c_str(), map_path.c_str(), hp.c_str(), nullptr};
+    const std::string pad_s = std::to_string(pad);
+    const char* argv[] = {helper.c_str(), map_path.c_str(), hp.c_str(), pad_s.c_str(), nullptr};
     const char* envp[] = {nullptr};
     const long pid = syscall(SYS_clone, CLONE_VFORK, 0, 0, 0, 0);
     if (pid == 0) {
@@ -1133,7 +1134,10 @@ void SpawnHugeCopy(const std::string& map_path, const std::string& hp) {
     }
 }
 
-int HugeImageFd(const std::string& map_path, int mfd) {
+// Perf 12: pad = (image address - file offset) mod 2 MB. The copy holds that many bytes before the .map's, so the copy's
+// offsets line up with addresses modulo 2 MB and the kernel can map it with 2 MB pages (with offset 0x1000 at a page
+// that is not 2 MB-aligned it never could: the 2026-11-03 A/B ran entirely on 4 KB mappings of the copy).
+int HugeImageFd(const std::string& map_path, int mfd, u64 pad) {
     // Off by default (2026-11-03 defaults A/B, 3 fresh boots each): no measurable speed win over the file mapping
     // (Settings cold 4.34-4.51 vs 4.26-4.32 s, boot and taps equal), and the tmpfs copy pins the whole image in RAM
     // (1216 MB) where the page cache holds only touched, reclaimable pages. X86CODE_A64_AOT_HUGE=1 turns it on.
@@ -1144,7 +1148,7 @@ int HugeImageFd(const std::string& map_path, int mfd) {
     if (mfd < 0 || fstat(mfd, &ms) != 0 || ms.st_size <= 0) {
         return -1;
     }
-    const u64 len = static_cast<u64>(ms.st_size);
+    const u64 len = static_cast<u64>(ms.st_size) + pad;
     const char* d = std::getenv("X86CODE_A64_AOT_HUGE_DIR");
     const std::string dir = d ? d : "/tmp/x86code-a64-img";
     mkdir(dir.c_str(), 0755);
@@ -1167,8 +1171,8 @@ int HugeImageFd(const std::string& map_path, int mfd) {
     // itself, like every process until the copy is linked in. Speed 34's foreground copy (2-5 s in the first open after
     // an image change, under the layout lock) is opt-in: X86CODE_A64_AOT_HUGE_FG=1.
     static const bool fg = [] { const char* e = std::getenv("X86CODE_A64_AOT_HUGE_FG"); return e && std::atoi(e) == 1; }();
-    if (!fg) {
-        SpawnHugeCopy(map_path, hp);
+    if (!fg || pad) {  // the foreground copy has no pad
+        SpawnHugeCopy(map_path, hp, pad);
         return -1;
     }
     if (DIR* dp = opendir(dir.c_str())) {
@@ -1198,9 +1202,10 @@ static void ImageDontDump(void* m, size_t len) {
 }
 
 void* MapImageRange(const std::string& map_path, int mfd, u64 lo, u64 hi, off_t off) {
-    const int hfd = HugeImageFd(map_path, mfd);
+    const u64 pad = (lo - static_cast<u64>(off)) & ((u64(1) << 21) - 1);
+    const int hfd = HugeImageFd(map_path, mfd, pad);
     void* m = mmap(reinterpret_cast<void*>(lo), hi - lo, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_FIXED,
-                   hfd >= 0 ? hfd : mfd, off);
+                   hfd >= 0 ? hfd : mfd, hfd >= 0 ? off + static_cast<off_t>(pad) : off);
     ImageDontDump(m, hi - lo);
     if (hfd >= 0) {
         if (m != MAP_FAILED) {
