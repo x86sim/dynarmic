@@ -2385,11 +2385,29 @@ void A64EmitX64::EmitA64SetPC(A64EmitContext& ctx, IR::Inst* inst) {
 }
 
 void A64EmitX64::EmitA64CallSupervisor(A64EmitContext& ctx, IR::Inst* inst) {
+    const bool had_host_call = ctx.has_host_call;
     ctx.has_host_call = true;
     ctx.reg_alloc.HostCall(nullptr);
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
     ASSERT(args[0].IsImmediate());
     const u32 imm = args[0].GetImmediateU32();
+    // x86Code Perf 8: a virtual call (see UserConfig::persist_svc_lo) keeps the block persistable
+    if (const u64 pc = ctx.Location().PC(); conf.persist_svc_hi && pc >= conf.persist_svc_lo && pc < conf.persist_svc_hi) {
+        struct MemberFunctionPointer {
+            u64 ptr;  // 1 + vtable offset for a virtual function
+            u64 adj;
+        };
+        const auto mfp = mcl::bit_cast<MemberFunctionPointer>(&A64::UserCallbacks::CallSVC);
+        if ((mfp.ptr & 1) && mfp.adj == 0) {
+            EmitMovAbs64(code.ABI_PARAM1, reinterpret_cast<u64>(conf.callbacks), RelocKind::CallbackThis);
+            code.mov(code.ABI_PARAM2.cvt32(), imm);
+            code.mov(rax, qword[code.ABI_PARAM1]);
+            code.call(qword[rax + static_cast<u32>(mfp.ptr - 1)]);
+            code.mov(code.byte[r15 + offsetof(A64JitState, exclusive_state)], u8(0));
+            ctx.has_host_call = had_host_call;
+            return;
+        }
+    }
     Devirtualize<&A64::UserCallbacks::CallSVC>(conf.callbacks).EmitCall(code, [&](RegList param) {
         code.mov(param[0], imm);
     });

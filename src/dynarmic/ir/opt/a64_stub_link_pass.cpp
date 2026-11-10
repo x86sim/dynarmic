@@ -34,7 +34,10 @@ void A64StubLinkPass(IR::Block& block, A64::UserCallbacks* cb) {
     }
     if (!set_pc || set_pc->GetArg(0).IsImmediate())
         return;
+    // SetPC's argument is X(Rn) read back through Identity (IdentityRemovalPass runs after this pass)
     IR::Inst* load = set_pc->GetArg(0).GetInst();
+    while (load->GetOpcode() == IR::Opcode::Identity && !load->GetArg(0).IsImmediate())
+        load = load->GetArg(0).GetInst();
     if (load->GetOpcode() != IR::Opcode::A64ReadMemory64 || !load->GetArg(1).IsImmediate())
         return;
 

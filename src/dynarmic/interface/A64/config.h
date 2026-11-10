@@ -310,6 +310,11 @@ struct UserConfig {
     /// x86Code: import stubs link directly to their GOT slot's current target, guarded (A64StubLinkPass).
     bool link_import_stubs = false;
 
+    /// x86Code Perf 8: blocks starting in [persist_svc_lo, persist_svc_hi) call CallSVC through the callbacks object's
+    /// vtable (`this` relocated, no host function address embedded), so an svc thunk block there can be persisted.
+    /// The embedder guarantees the code there is the same in every process (the libsystem stub dylibs).
+    std::uint64_t persist_svc_lo = 0, persist_svc_hi = 0;
+
     /// x86Code: when non-zero, the block at this guest PC is emitted as a hand-written x86 objc_msgSend
     /// cache probe (no A64 translate, no CallSVC). Hits FastDispatch to the IMP; misses go to uncached.
     std::uint64_t inline_objc_msgsend = 0;
