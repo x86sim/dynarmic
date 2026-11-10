@@ -6,6 +6,8 @@
 
 #include <atomic>
 #include <cstdio>
+#include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
@@ -346,6 +348,10 @@ public:
         jit_state.pc = value;
     }
 
+    Jit::StatePointers GetStatePointers() {
+        return {jit_state.reg.data(), &jit_state.sp, &jit_state.pc, jit_state.vec.data()};
+    }
+
     u64 GetRegister(size_t index) const {
         if (index == 31)
             return GetSP();
@@ -429,7 +435,8 @@ public:
         return Common::DisassembleX64(block_of_code.GetCodeBegin(), size);
     }
 
-    static thread_local Impl* t_running;
+    // Perf 1: initial-exec (no __tls_get_addr per LookupBlockThunk; 8 bytes of glibc's static TLS surplus)
+    static thread_local Impl* t_running __attribute__((tls_model("initial-exec")));
     CodePtr GetCurrentBlock() {
         return GetBlock(GetCurrentLocation());
     }
@@ -456,9 +463,35 @@ private:
         // Preferences crashes). After a lock-free hit the entry is filled only if the mutex is free (try_lock), from
         // a lookup under it.
         const bool fd = conf.shared_translations && fd_fill;
+        const bool count = PerfCounters() && shared;
+        if (count) {
+            Count(shared->stats.getblock);
+        }
+        // Perf 1: per-thread L0 first (see L0Entry)
+        L0Entry* l0e = nullptr;
+        if (fd && l0_on && !fd_verify) {
+            const u64 gen = shared->invalidate_gen;
+            if (gen != l0_gen) {
+                l0.fill(L0Entry{~0ull, nullptr});
+                l0_gen = gen;
+            }
+            l0e = &L0Slot(current_location.Value());
+            if (l0e->desc == current_location.Value()) {
+                if (count) {
+                    Count(shared->stats.l0_hits);
+                }
+                return l0e->ep;
+            }
+        }
         if (fd) {
             if (const CodePtr ep = emitter.FastDispatchProbe(current_location.Value())) {
                 if (!fd_verify) {
+                    if (count) {
+                        Count(shared->stats.probe_hits);
+                    }
+                    if (l0e) {
+                        *l0e = L0Entry{current_location.Value(), ep};
+                    }
                     return ep;
                 }
                 // X86CODE_A64_GETBLOCK_FD_VERIFY=1 (debug): check every probe hit against the map under the mutex.
@@ -495,6 +528,12 @@ private:
                         RecordFill(current_location.Value(), now, 1);
                     }
                 }
+                if (count) {
+                    Count(shared->stats.lf_hits);
+                }
+                if (l0e) {
+                    *l0e = L0Entry{current_location.Value(), ep};
+                }
                 return ep;
             }
         }
@@ -507,6 +546,9 @@ private:
                 if (fd) {
                     emitter.FastDispatchFill(current_location.Value(), block->entrypoint);
                     RecordFill(current_location.Value(), block->entrypoint, 2);
+                }
+                if (l0e) {
+                    *l0e = L0Entry{current_location.Value(), block->entrypoint};
                 }
                 return block->entrypoint;
             }
@@ -630,6 +672,38 @@ private:
     size_t run_depth = 0;
     u64 rsb_invalidate_gen = 0;  // last shared->invalidate_gen we ResetRSB'd for
 
+    // x86Code Perf 1: a small direct-mapped cache in front of FastDispatchProbe, one per Jit (= per guest thread, so
+    // no locking). GetBlock runs on every re-entry from the run loop (each native call returns through it) and on the
+    // emitted dispatcher's misses; the shared FastDispatch table is megabytes of hashed slots, so ~half of the probe's
+    // time was the load of a cold slot (11% of a cold Settings launch in the probe alone). The return sites of native
+    // calls repeat, so a few KB per thread holds them. Tagged with shared->invalidate_gen (the RSB's lock-free check):
+    // every invalidation bumps it, so the cache is dropped before any lookup after one, as the probe's own guarantee
+    // (a thread that invalidated code never finds the old block afterwards). X86CODE_A64_GETBLOCK_L0=0 turns it off.
+    struct L0Entry {
+        u64 desc;
+        CodePtr ep;
+    };
+    static constexpr size_t kL0 = 256;
+    std::array<L0Entry, kL0> l0{};
+    u64 l0_gen = ~0ull;
+    const bool l0_on = !(std::getenv("X86CODE_A64_GETBLOCK_L0") && std::atoi(std::getenv("X86CODE_A64_GETBLOCK_L0")) == 0);
+    L0Entry& L0Slot(u64 desc) { return l0[((desc >> 2) ^ (desc >> 11)) & (kL0 - 1)]; }
+
+public:
+    // Perf 1: GetBlock path counters in SharedStats, only with X86CODE_A64_PROFILE (relaxed atomic adds)
+    static bool PerfCounters() {
+        static const bool on = std::getenv("X86CODE_A64_PROFILE") != nullptr;
+        return on;
+    }
+    static void Count(u64& c) { __atomic_fetch_add(&c, 1, __ATOMIC_RELAXED); }
+    u64 CurrentPC() const { return jit_state.pc; }
+    Jit::SharedStats& SharedStatsRef() {
+        static Jit::SharedStats unshared;
+        return shared ? shared->stats : unshared;
+    }
+
+private:
+
     std::shared_ptr<SharedCode> shared;
     const UserConfig& conf;
     A64JitState jit_state;
@@ -661,9 +735,52 @@ private:
     std::mutex invalidation_mutex;
 };
 
-thread_local Jit::Impl* Jit::Impl::t_running = nullptr;
+thread_local Jit::Impl* Jit::Impl::t_running __attribute__((tls_model("initial-exec"))) = nullptr;
+
+// Perf 1 (X86CODE_A64_PROFILE): which guest PCs reach the dispatcher's C++ lookup, approximately (racy counts in a
+// fixed open-addressed table; a full table stops recording new PCs)
+namespace {
+constexpr size_t kThunkTop = 8192;
+struct ThunkPc {
+    u64 pc;
+    u64 n;
+};
+ThunkPc g_thunk_top[kThunkTop];
+ThunkPc g_thunk_ra[kThunkTop];  // by the emitted call site (return address of the LookupBlock call)
+void RecordThunkPc(u64 pc, ThunkPc* tab = g_thunk_top) {
+    for (size_t i = (pc >> 2) * 0x9E3779B97F4A7C15ull >> 51, k = 0; k < 16; k++, i = (i + 1) & (kThunkTop - 1)) {
+        u64 cur = __atomic_load_n(&tab[i].pc, __ATOMIC_RELAXED);
+        if (cur == 0 && __atomic_compare_exchange_n(&tab[i].pc, &cur, pc, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
+            cur = pc;
+        }
+        if (cur == pc) {
+            __atomic_fetch_add(&tab[i].n, 1, __ATOMIC_RELAXED);
+            return;
+        }
+    }
+}
+}  // namespace
+
+std::vector<std::pair<std::uint64_t, std::uint64_t>> Jit::TopThunkTargets(std::size_t n, bool callers) {
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> v;
+    for (const auto& e : (callers ? g_thunk_ra : g_thunk_top)) {
+        if (e.pc) {
+            v.push_back({e.n, e.pc});
+        }
+    }
+    std::sort(v.rbegin(), v.rend());
+    if (v.size() > n) {
+        v.resize(n);
+    }
+    return v;
+}
 
 CodePtr Jit::SharedCode::LookupBlockThunk(void*) {
+    if (Jit::Impl::PerfCounters()) {
+        Jit::Impl::Count(Jit::Impl::t_running->SharedStatsRef().thunk);
+        RecordThunkPc(Jit::Impl::t_running->CurrentPC());
+        RecordThunkPc(reinterpret_cast<u64>(__builtin_return_address(0)), g_thunk_ra);
+    }
     return Jit::Impl::t_running->GetCurrentBlock();
 }
 
@@ -775,6 +892,10 @@ u64 Jit::GetPC() const {
 
 void Jit::SetPC(u64 value) {
     impl->SetPC(value);
+}
+
+Jit::StatePointers Jit::GetStatePointers() {
+    return impl->GetStatePointers();
 }
 
 u64 Jit::GetRegister(size_t index) const {

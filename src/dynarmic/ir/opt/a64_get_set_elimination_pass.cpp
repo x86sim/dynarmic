@@ -9,6 +9,7 @@
 
 #include "dynarmic/frontend/A64/a64_types.h"
 #include "dynarmic/ir/basic_block.h"
+#include "dynarmic/ir/ir_emitter.h"
 #include "dynarmic/ir/opcodes.h"
 #include "dynarmic/ir/opt/passes.h"
 #include "dynarmic/ir/value.h"
@@ -51,7 +52,12 @@ void A64GetSetElimination(IR::Block& block) {
         info.last_set_instruction = set_inst;
     };
 
-    const auto do_get = [](RegisterInfo& info, Iterator get_inst, TrackingType tracking_type) {
+    // x86Code Perf 4: a W write followed by an X read of the same register (or X then W) is answered from the value
+    // too: SetW zero-extends into the X register, and a W read is the low word of the X value. Arm64 code mixes the
+    // two views of a register all the time; each miss was a store of the guest register to the JIT state and a load
+    // back (a quarter of the image's instructions address the state).
+    IR::IREmitter ir{block};
+    const auto do_get = [&ir](RegisterInfo& info, Iterator get_inst, TrackingType tracking_type) {
         const auto do_nothing = [&] {
             info = {};
             info.register_value = IR::Value(&*get_inst);
@@ -65,6 +71,18 @@ void A64GetSetElimination(IR::Block& block) {
 
         if (info.tracking_type == tracking_type) {
             get_inst->ReplaceUsesWith(info.register_value);
+            return;
+        }
+
+        // Only a W *write* says the upper half is zero; a value known from a W read says nothing about it.
+        if (info.tracking_type == TrackingType::W && tracking_type == TrackingType::X && info.set_instruction_present) {
+            ir.SetInsertionPointBefore(get_inst);
+            get_inst->ReplaceUsesWith(ir.ZeroExtendWordToLong(IR::U32{info.register_value}));
+            return;
+        }
+        if (info.tracking_type == TrackingType::X && tracking_type == TrackingType::W) {
+            ir.SetInsertionPointBefore(get_inst);
+            get_inst->ReplaceUsesWith(ir.LeastSignificantWord(IR::U64{info.register_value}));
             return;
         }
 

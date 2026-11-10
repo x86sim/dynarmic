@@ -316,7 +316,7 @@ void EmitX64::PushRSBHelper(Xbyak::Reg64 loc_desc_reg, Xbyak::Reg64 index_reg, I
     using namespace Xbyak::util;
 
     const auto block = GetBasicBlock(target);
-    CodePtr target_code_ptr = block ? block->entrypoint : code.GetReturnFromRunCodeAddress();
+    CodePtr target_code_ptr = block ? block->entrypoint : nullptr;  // x86Code Perf 1: EmitPatchMovRcx picks the unlinked form
 
     code.mov(index_reg.cvt32(), dword[r15 + code.GetJitStateInfo().offsetof_rsb_ptr]);
 

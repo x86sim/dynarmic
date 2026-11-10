@@ -191,6 +191,19 @@ protected:
 
     const void* terminal_handler_pop_rsb_hint;
     const void* terminal_handler_fast_dispatch_hint = nullptr;
+    // x86Code Perf 1: the code pointer of an RSB entry whose target is not linked (not translated yet, or a site in
+    // the mapped AOT image, whose sites are only linked at load to blocks of the image). It was ReturnFromRunCode:
+    // the dispatcher's C++ LookupBlock on every such return, even when the RSB predicted it (cold Settings: ~77M
+    // lookups, 99.96% from there; e.g. _xpc_dictionary_insert's two return sites 5.4M each). The fast dispatch
+    // handler recomputes the location from jit_state.pc and probes the table inline (GetBlock fills it), calling
+    // LookupBlock only on a real miss. Like a FastDispatchHint terminal it does not check halt_reason (CheckHalt
+    // terminals do: every svc block).
+    CodePtr UnlinkedRsbTarget() const {
+        if (conf.HasOptimization(OptimizationFlag::FastDispatch) && terminal_handler_fast_dispatch_hint) {
+            return static_cast<CodePtr>(terminal_handler_fast_dispatch_hint);
+        }
+        return code.GetReturnFromRunCodeAddress();
+    }
     FastDispatchEntry& (*fast_dispatch_table_lookup)(u64) = nullptr;
     void GenTerminalHandlers();
 
@@ -218,6 +231,16 @@ protected:
     u64 fastmem_faults = 0;
     std::map<u64, u64> fault_sites;
     tsl::robin_set<u64> checked_blocks;
+    // x86Code Perf 1d: the image block containing a host address, without a scan of every block (OnFastmemFault).
+    // The image's blocks are sorted by guest PC and a library's blocks share a slot of the code, so consecutive groups
+    // of kStaticGroup blocks span narrow code ranges: [lo, hi) per group, built on first use (~1.6K groups, 26 KB).
+    // A block containing the address belongs to a group whose range contains it, so only those groups are scanned.
+    static constexpr size_t kStaticGroup = 4096;
+    struct StaticGroup {
+        u32 lo, hi;
+    };
+    std::vector<StaticGroup> static_groups;
+    std::optional<u64> StaticImageBlockAt(u64 off);
     size_t checked_retranslations = 0;
     static constexpr u64 kCheckAfterFaults = 8;
     void OnFastmemFault(u64 rip);

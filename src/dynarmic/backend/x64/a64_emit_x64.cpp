@@ -146,14 +146,7 @@ void A64EmitX64::OnFastmemFault(u64 rip) {
         }
     }
     if (!loc && static_image.active && rip >= reinterpret_cast<u64>(static_image.code_begin)) {
-        const u64 off = rip - reinterpret_cast<u64>(static_image.code_begin);
-        for (size_t i = 0; i < static_image.n_blocks; i++) {
-            const auto& b = static_image.blocks[i];
-            if (off >= b.off && off < u64(b.off) + b.size && !static_image.Dead(i)) {
-                loc = b.desc;
-                break;
-            }
-        }
+        loc = StaticImageBlockAt(rip - reinterpret_cast<u64>(static_image.code_begin));
     }
     if (!loc || !checked_blocks.insert(*loc).second) {
         return;
@@ -167,6 +160,36 @@ void A64EmitX64::OnFastmemFault(u64 rip) {
     if (shared_invalidate_gen) {
         ++*shared_invalidate_gen;
     }
+}
+
+// Perf 1d: see static_groups. Same answer as a scan of every block in order (the first live block containing off,
+// in the blocks' order), so groups are visited in order too.
+std::optional<u64> A64EmitX64::StaticImageBlockAt(u64 off) {
+    const size_t n = static_image.n_blocks;
+    if (static_groups.empty() && n) {
+        static_groups.reserve((n + kStaticGroup - 1) / kStaticGroup);
+        for (size_t g = 0; g < n; g += kStaticGroup) {
+            u32 lo = ~0u, hi = 0;
+            for (size_t i = g; i < std::min(n, g + kStaticGroup); i++) {
+                const auto& b = static_image.blocks[i];
+                lo = std::min(lo, b.off);
+                hi = std::max(hi, static_cast<u32>(std::min<u64>(u64(b.off) + b.size, 0xFFFFFFFFu)));
+            }
+            static_groups.push_back({lo, hi});
+        }
+    }
+    for (size_t g = 0; g < static_groups.size(); g++) {
+        if (off < static_groups[g].lo || off >= static_groups[g].hi) {
+            continue;
+        }
+        for (size_t i = g * kStaticGroup; i < std::min(n, (g + 1) * kStaticGroup); i++) {
+            const auto& b = static_image.blocks[i];
+            if (off >= b.off && off < u64(b.off) + b.size && !static_image.Dead(i)) {
+                return b.desc;
+            }
+        }
+    }
+    return std::nullopt;
 }
 
 A64EmitX64::~A64EmitX64() = default;
@@ -712,7 +735,9 @@ size_t A64EmitX64::SaveChunk(const std::string& path, const u8 cache_uuid[16], u
     {
         std::unordered_map<u32, size_t> reloc_at;
         for (size_t i = 0; i < relocs.size(); i++) reloc_at[relocs[i].offset] = i;
-        const u64 ret = reinterpret_cast<u64>(code.GetReturnFromRunCodeAddress());
+        // Perf 1: the unlinked form is the fast dispatch handler (UnlinkedRsbTarget), not ReturnFromRun
+        const u64 ret = reinterpret_cast<u64>(UnlinkedRsbTarget());
+        const RelocKind ret_kind = UnlinkedRsbTarget() == terminal_handler_fast_dispatch_hint ? RelocKind::TermFastDispatch : RelocKind::ReturnFromRun;
         for_each_site([&](u64, PatchInformation::Kind kind, CodePtr site) {
             const u64 sa = reinterpret_cast<u64>(site);
             if (kind != PatchInformation::MOV_RCX || sa < begin_u + base_off || sa + 10 > end_u || !in_persisted[sa - begin_u - base_off]) {
@@ -721,9 +746,9 @@ size_t A64EmitX64::SaveChunk(const std::string& path, const u8 cache_uuid[16], u
             std::memcpy(slab.data() + (sa + 2 - begin_u - base_off), &ret, 8);
             const u32 off = static_cast<u32>(sa + 2 - begin_u);
             if (auto it = reloc_at.find(off); it != reloc_at.end()) {
-                relocs[it->second].kind = RelocKind::ReturnFromRun;
+                relocs[it->second].kind = ret_kind;
             } else {
-                relocs.push_back(RelocEntry{off, RelocKind::ReturnFromRun});
+                relocs.push_back(RelocEntry{off, ret_kind});
             }
         });
     }
@@ -1367,7 +1392,8 @@ size_t A64EmitX64::LoadPersistentCache(const std::string& path, const u8 cache_u
                 SharePrelude(path, reinterpret_cast<u64>(code.getCode()), floor_u);
                 return static_image.n_blocks;
             }
-            static_image.Reset();  // fall through to the full parse
+            static_image.Reset();
+            static_groups.clear();  // Perf 1d  // fall through to the full parse
             fastmem_patch_info.clear();
         }
         std::fseek(f, data_off, SEEK_SET);
@@ -1561,14 +1587,20 @@ size_t A64EmitX64::LoadPersistentCache(const std::string& path, const u8 cache_u
         sb.erase(std::unique(sb.begin(), sb.end(), [](const auto& a, const auto& b) { return a.desc == b.desc; }), sb.end());
         std::vector<StaticImage::Link> sl;
         sl.reserve(links.size());
+        // x86Code Perf 1c: PushRSB's `mov rcx, imm64` sites (MOV_RCX, 10 bytes) too. They were left out here (the
+        // non-lazy path below keeps them), so no RSB push site of the image was ever linked, even to a block of the
+        // image: every return in image code reached its return site through the dispatcher (cold Settings: tens of
+        // millions of C++ lookups; since Perf 1b through the fast dispatch handler's table probe).
         for (const auto& l : links) {
-            if (static_cast<u64>(l.site_off) + 8 <= hdr.code_size && l.kind <= PatchInformation::JMP) {
+            const u64 len = l.kind == PatchInformation::MOV_RCX ? 10 : 8;
+            if (static_cast<u64>(l.site_off) + len <= hdr.code_size && l.kind <= PatchInformation::MOV_RCX) {
                 sl.push_back({l.target, l.site_off, l.kind});
             }
         }
         std::stable_sort(sl.begin(), sl.end(), [](const auto& a, const auto& b) { return a.target < b.target; });
         std::sort(static_fm.begin(), static_fm.end(), [](const auto& a, const auto& b) { return a.off < b.off; });
         static_image.Reset();
+        static_groups.clear();  // Perf 1d
         static_image.code_begin = begin;
         static_image.own_blocks = std::move(sb);
         static_image.own_links = std::move(sl);
@@ -1833,6 +1865,7 @@ bool A64EmitX64::MapStaticIndex(const std::string& idx_path, u8* begin) {
     ImageDontDump(m, len);
     const u8* mb = static_cast<const u8*>(m);
     static_image.Reset();
+    static_groups.clear();  // Perf 1d
     static_image.code_begin = begin;
     static_image.map = m;
     static_image.map_len = len;
@@ -2716,7 +2749,7 @@ void A64EmitX64::EmitPatchJmp(const IR::LocationDescriptor& target_desc, CodePtr
 
 void A64EmitX64::EmitPatchMovRcx(CodePtr target_code_ptr) {
     if (!target_code_ptr) {
-        target_code_ptr = code.GetReturnFromRunCodeAddress();
+        target_code_ptr = UnlinkedRsbTarget();
     }
     const CodePtr patch_location = code.getCurr();
     if (conf.shared_translations && patching) {
@@ -2724,12 +2757,14 @@ void A64EmitX64::EmitPatchMovRcx(CodePtr target_code_ptr) {
         __atomic_store_n(reinterpret_cast<u64*>(reinterpret_cast<u64>(patch_location) + 2), reinterpret_cast<u64>(target_code_ptr), __ATOMIC_RELEASE);
         return;
     }
-    // Absolute code pointer: block entry (CodeBegin-relative) or ReturnFromRunCode.
+    // Absolute code pointer: block entry (CodeBegin-relative), ReturnFromRunCode or the fast dispatch handler.
     const RelocKind kind = (target_code_ptr == code.GetReturnFromRunCodeAddress())
                                ? RelocKind::ReturnFromRun
                                : (target_code_ptr == code.GetForceReturnFromRunCodeAddress())
                                      ? RelocKind::ForceReturn
-                                     : RelocKind::CodeBegin;
+                                     : (target_code_ptr == terminal_handler_fast_dispatch_hint)
+                                           ? RelocKind::TermFastDispatch
+                                           : RelocKind::CodeBegin;
     EmitMovAbs64(code.rcx, reinterpret_cast<u64>(target_code_ptr), kind);
     code.EnsurePatchLocationSize(patch_location, 10);
     ASSERT(!conf.shared_translations || (code.getCurr<const u8*>() - static_cast<const u8*>(patch_location) == 10 && ((reinterpret_cast<u64>(patch_location) + 2) & 7) == 0));

@@ -32,8 +32,13 @@ public:
     /// x86Code: translation statistics of a shared cache (profiling).
     struct SharedStats {
         std::uint64_t blocks = 0, guest_instructions = 0, code_bytes = 0, translate_ns = 0, lookups = 0;
+        /// x86Code Perf 1 (X86CODE_A64_PROFILE only): GetBlock calls, of them from the emitted dispatcher's miss path
+        /// (LookupBlockThunk), and where they were answered (per-thread L0, FastDispatch probe, lock-free map)
+        std::uint64_t getblock = 0, thunk = 0, l0_hits = 0, probe_hits = 0, lf_hits = 0;
     };
     static SharedStats GetSharedStats(const SharedCode& shared);
+    /// x86Code Perf 1 (X86CODE_A64_PROFILE): the guest PCs looked up most through the dispatcher's C++ path, (count, pc)
+    static std::vector<std::pair<std::uint64_t, std::uint64_t>> TopThunkTargets(std::size_t n, bool callers = false);
     /// x86Code RAM 4: runs fn(arg) with the shared emitter lock held (every write to translated code, including the
     /// AOT image's link sites, happens under it): libarm64jit drops page-table entries of clean image pages.
     static void WithSharedLock(SharedCode& shared, void (*fn)(void*), void* arg);
@@ -140,6 +145,16 @@ public:
     void SetPC(std::uint64_t value);
 
     /// Read general-purpose register.
+    /// x86Code Perf 1e: where the guest registers live (fixed for the Jit's lifetime): the native-call boundary reads
+    /// and writes them directly instead of one out-of-line accessor call per register (~28 per native call).
+    struct StatePointers {
+        std::uint64_t* reg;  // x0..x30
+        std::uint64_t* sp;
+        std::uint64_t* pc;
+        std::uint64_t* vec;  // 32 x 128-bit, two u64 each
+    };
+    StatePointers GetStatePointers();
+
     std::uint64_t GetRegister(std::size_t index) const;
     /// Modify general-purpose register.
     void SetRegister(size_t index, std::uint64_t value);

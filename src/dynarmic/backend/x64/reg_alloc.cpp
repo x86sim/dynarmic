@@ -654,6 +654,20 @@ void RegAlloc::SpillRegister(HostLoc loc) {
     ASSERT_MSG(!LocInfo(loc).IsEmpty(), "There is no need to spill unoccupied registers");
     ASSERT_MSG(!LocInfo(loc).IsLocked(), "Registers that have been allocated must not be spilt");
 
+    // x86Code Perf 5: a GPR value that has to make room goes to a free callee-saved register of the block's order
+    // (never displaced by a HostCall, so it does not bounce) before a stack slot. Upstream always spilled to the
+    // stack: translated code used ~6 of the 14 allocatable GPRs, with a store + reload around every scratch use of a
+    // value that is still needed (3% of the image's instructions address spill slots).
+    if (HostLocIsGPR(loc)) {
+        for (const HostLoc r : gpr_order) {
+            const bool callee_saved = r == HostLoc::RBX || r == HostLoc::RBP || r == HostLoc::R12 || r == HostLoc::R13 || r == HostLoc::R14;
+            if (callee_saved && r != loc && LocInfo(r).IsEmpty()) {
+                Move(r, loc);
+                return;
+            }
+        }
+    }
+
     const HostLoc new_loc = FindFreeSpill();
     Move(new_loc, loc);
 }
