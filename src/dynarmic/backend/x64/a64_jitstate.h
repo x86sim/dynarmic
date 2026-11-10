@@ -50,7 +50,9 @@ struct A64JitState {
     static constexpr u64 RESERVATION_GRANULE_MASK = 0xFFFF'FFFF'FFFF'FFF0ull;
     u8 exclusive_state = 0;
 
-    static constexpr size_t RSBSize = 8;  // MUST be a power of 2.
+    // x86Code Perf 6: 32 (was 8). Swift/ObjC call chains are deeper than 8: every return past the eighth level
+    // missed and went through the fast dispatch probe (~15% of SpringBoard during an app launch in the handlers).
+    static constexpr size_t RSBSize = 32;  // MUST be a power of 2.
     static constexpr size_t RSBPtrMask = RSBSize - 1;
     u32 rsb_ptr = 0;
     std::array<u64, RSBSize> rsb_location_descriptors;
