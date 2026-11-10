@@ -241,10 +241,22 @@ A64EmitX64::BlockDescriptor A64EmitX64::Emit(IR::Block& block) {
         if (conf.fastmem_pointer && !FastmemUnchecked(conf)) {
             gprs.erase(std::find(gprs.begin(), gprs.end(), HostLoc::R13));
         }
+        // Perf 14: pinned guest registers own r12/r13/r14
+        const HostLoc pinned_hosts[4] = {HostLoc::R12, HostLoc::R13, HostLoc::R14, HostLoc::RBP};
+        for (size_t i = 0; i < 4; i++) {
+            if (conf.pinned_regs[i] >= 0) {
+                if (auto it = std::find(gprs.begin(), gprs.end(), pinned_hosts[i]); it != gprs.end()) {
+                    gprs.erase(it);
+                }
+            }
+        }
         return gprs;
     }();
 
     RegAlloc reg_alloc{code, gpr_order, any_xmm};
+    if (const auto p = PinnedHost(32)) {
+        nzcv_pinned = p->cvt32();
+    }
     A64EmitContext ctx{conf, reg_alloc, block};
     ctx.checked_memory = !checked_blocks.empty() && checked_blocks.count(block.Location().Value());
     code.SetCallFlag(&ctx.has_host_call);
@@ -351,8 +363,8 @@ A64EmitX64::BlockDescriptor A64EmitX64::EmitInlineObjCMsgSend(IR::LocationDescri
     constexpr auto Near = Xbyak::CodeGenerator::T_NEAR;
 
     // rax = obj (x0), rcx = sel (x1)
-    code.mov(rax, qword[r15 + reg_off(0)]);
-    code.mov(rcx, qword[r15 + reg_off(1)]);
+    LoadGuestX(rax, 0);
+    LoadGuestX(rcx, 1);
 
     code.test(rax, rax);
     code.jz(nil_path, Near);
@@ -366,8 +378,8 @@ A64EmitX64::BlockDescriptor A64EmitX64::EmitInlineObjCMsgSend(IR::LocationDescri
     code.mov(rdx, qword[rdx]);  // raw isa
     code.mov(rbx, kIsaMask);
     code.and_(rdx, rbx);        // class
-    code.mov(qword[r15 + reg_off(15)], rdx);  // x15 = class
-    code.mov(qword[r15 + reg_off(16)], rdx);  // x16 = class
+    StoreGuestX(15, rdx);  // x15 = class
+    StoreGuestX(16, rdx);  // x16 = class
 
     // cache = *(class+0x10); buckets = cache & mask48; mask = cache >> 48
     code.mov(r8, qword[rdx + kCacheOffset]);
@@ -461,13 +473,14 @@ A64EmitX64::BlockDescriptor A64EmitX64::EmitInlineObjCMsgSend(IR::LocationDescri
 
     code.L(nil_path);
     // Match Apple nil msgSend: x0=0, x1=0, d0–d3=0, return to LR
-    code.mov(qword[r15 + reg_off(0)], u64(0));
-    code.mov(qword[r15 + reg_off(1)], u64(0));
+    code.xor_(eax, eax);
+    StoreGuestX(0, rax);
+    StoreGuestX(1, rax);
     for (size_t i = 0; i < 4; i++) {
         code.mov(qword[r15 + vec_off(i)], u64(0));
         code.mov(qword[r15 + vec_off(i) + 8], u64(0));
     }
-    code.mov(rax, qword[r15 + reg_off(30)]);
+    LoadGuestX(rax, 30);
     code.mov(qword[r15 + offsetof(A64JitState, pc)], rax);
     code.mov(code.byte[r15 + offsetof(A64JitState, exclusive_state)], u8(0));
     code.jmp(terminal_handler_pop_rsb_hint);
@@ -2029,14 +2042,51 @@ void A64EmitX64::ClearFastDispatchTable() {
     madvise(fast_dispatch_table.data(), fast_dispatch_table_size * sizeof(FastDispatchEntry), MADV_DONTNEED);
 }
 
+void A64EmitX64::EmitPinnedStore() {
+    for (int g = 0; g < 33; g++) {
+        if (const auto p = PinnedHost(g)) {
+            if (g == 32) {
+                code.mov(dword[r15 + GuestRegOffset(g)], p->cvt32());
+            } else {
+                code.mov(qword[r15 + GuestRegOffset(g)], *p);
+            }
+        }
+    }
+}
+void A64EmitX64::EmitPinnedLoad() {
+    for (int g = 0; g < 33; g++) {
+        if (const auto p = PinnedHost(g)) {
+            if (g == 32) {
+                code.mov(p->cvt32(), dword[r15 + GuestRegOffset(g)]);
+            } else {
+                code.mov(*p, qword[r15 + GuestRegOffset(g)]);
+            }
+        }
+    }
+}
+void A64EmitX64::LoadGuestX(const Xbyak::Reg64& dst, int guest) {
+    if (const auto p = PinnedHost(guest)) {
+        code.mov(dst, *p);
+    } else {
+        code.mov(dst, qword[r15 + GuestRegOffset(guest)]);
+    }
+}
+void A64EmitX64::StoreGuestX(int guest, const Xbyak::Reg64& src) {
+    if (const auto p = PinnedHost(guest)) {
+        code.mov(*p, src);
+    } else {
+        code.mov(qword[r15 + GuestRegOffset(guest)], src);
+    }
+}
+
 void A64EmitX64::GenTerminalHandlers() {
-    // PC ends up in rbp, location_descriptor ends up in rbx
+    // PC ends up in rdx, location_descriptor ends up in rbx
     const auto calculate_location_descriptor = [this] {
         // This calculation has to match up with A64::LocationDescriptor::UniqueHash
         // TODO: Optimization is available here based on known state of fpcr.
-        code.mov(rbp, qword[r15 + offsetof(A64JitState, pc)]);
+        code.mov(rdx, qword[r15 + offsetof(A64JitState, pc)]);
         code.mov(rcx, A64::LocationDescriptor::pc_mask);
-        code.and_(rcx, rbp);
+        code.and_(rcx, rdx);
         code.mov(ebx, dword[r15 + offsetof(A64JitState, fpcr)]);
         code.and_(ebx, A64::LocationDescriptor::fpcr_mask);
         code.shl(rbx, A64::LocationDescriptor::fpcr_shift);
@@ -2085,18 +2135,18 @@ void A64EmitX64::GenTerminalHandlers() {
         calculate_location_descriptor();
         code.L(rsb_cache_miss);
         // Prelude (before GetCodeBegin): not in the persistent slab; no reloc entry needed.
-        code.mov(r12, reinterpret_cast<u64>(fast_dispatch_table.data()));
-        code.mov(rbp, rbx);
+        code.mov(rsi, reinterpret_cast<u64>(fast_dispatch_table.data()));  // Perf 14: not r12 (pinned)
+        code.mov(rdx, rbx);
         if (code.HasHostFeature(HostFeature::SSE42)) {
-            code.crc32(rbp, r12);
+            code.crc32(rdx, rsi);
         }
-        code.and_(ebp, fast_dispatch_table_mask);
-        code.lea(rbp, ptr[r12 + rbp]);
+        code.and_(edx, fast_dispatch_table_mask);
+        code.lea(rdx, ptr[rsi + rdx]);
         if (conf.shared_translations) {
             // Entries are read and written as one aligned 16-byte access (atomic on AVX-capable x86): another
             // thread may be replacing the entry. xmm0/xmm1 are dead between blocks.
             Xbyak::Label shared_miss;
-            code.movdqa(xmm0, xword[rbp]);
+            code.movdqa(xmm0, xword[rdx]);
             code.movq(rax, xmm0);
             code.not_(rax);
             code.cmp(rbx, rax);
@@ -2104,7 +2154,15 @@ void A64EmitX64::GenTerminalHandlers() {
             code.pextrq(rax, xmm0, 1);
             code.jmp(rax);
             code.L(shared_miss);
+            if (!GetBlockFillsFastDispatch()) {
+                code.push(rdx);  // Perf 14: rdx (the entry) is caller-saved; rbp is a pinned guest register
+                code.sub(rsp, 8);
+            }
             code.LookupBlock();
+            if (!GetBlockFillsFastDispatch()) {
+                code.add(rsp, 8);
+                code.pop(rdx);
+            }
             // Speed 8: GetBlock fills the entry, with the shared mutex held; a store here after LookupBlock could put
             // back a block that another thread invalidated meanwhile.
             if (!GetBlockFillsFastDispatch()) {
@@ -2113,21 +2171,25 @@ void A64EmitX64::GenTerminalHandlers() {
                 code.not_(rbx);
                 code.movq(xmm1, rax);
                 code.punpcklqdq(xmm0, xmm1);
-                code.movdqa(xword[rbp], xmm0);
+                code.movdqa(xword[rdx], xmm0);
             }
             code.jmp(rax);
         }
-        code.mov(rax, qword[rbp + offsetof(FastDispatchEntry, location_descriptor)]);
+        code.mov(rax, qword[rdx + offsetof(FastDispatchEntry, location_descriptor)]);
         code.not_(rax);
         code.cmp(rbx, rax);
         code.jne(fast_dispatch_cache_miss);
-        code.jmp(ptr[rbp + offsetof(FastDispatchEntry, code_ptr)]);
+        code.jmp(ptr[rdx + offsetof(FastDispatchEntry, code_ptr)]);
         code.L(fast_dispatch_cache_miss);
         code.not_(rbx);
-        code.mov(qword[rbp + offsetof(FastDispatchEntry, location_descriptor)], rbx);
+        code.mov(qword[rdx + offsetof(FastDispatchEntry, location_descriptor)], rbx);
         code.not_(rbx);
+        code.push(rdx);
+        code.sub(rsp, 8);
         code.LookupBlock();
-        code.mov(ptr[rbp + offsetof(FastDispatchEntry, code_ptr)], rax);
+        code.add(rsp, 8);
+        code.pop(rdx);
+        code.mov(ptr[rdx + offsetof(FastDispatchEntry, code_ptr)], rax);
         code.jmp(rax);
         PerfMapRegister(terminal_handler_fast_dispatch_hint, code.getCurr(), "a64_terminal_handler_fast_dispatch_hint");
 
@@ -2160,7 +2222,11 @@ void A64EmitX64::EmitA64SetCheckBit(A64EmitContext& ctx, IR::Inst* inst) {
 
 void A64EmitX64::EmitA64GetCFlag(A64EmitContext& ctx, IR::Inst* inst) {
     const Xbyak::Reg32 result = ctx.reg_alloc.ScratchGpr().cvt32();
-    code.mov(result, dword[r15 + offsetof(A64JitState, cpsr_nzcv)]);
+    if (nzcv_pinned) {
+        code.mov(result, *nzcv_pinned);
+    } else {
+        code.mov(result, dword[r15 + offsetof(A64JitState, cpsr_nzcv)]);
+    }
     code.shr(result, NZCV::x64_c_flag_bit);
     code.and_(result, 1);
     ctx.reg_alloc.DefineValue(inst, result);
@@ -2169,7 +2235,11 @@ void A64EmitX64::EmitA64GetCFlag(A64EmitContext& ctx, IR::Inst* inst) {
 void A64EmitX64::EmitA64GetNZCVRaw(A64EmitContext& ctx, IR::Inst* inst) {
     const Xbyak::Reg32 nzcv_raw = ctx.reg_alloc.ScratchGpr().cvt32();
 
-    code.mov(nzcv_raw, dword[r15 + offsetof(A64JitState, cpsr_nzcv)]);
+    if (nzcv_pinned) {
+        code.mov(nzcv_raw, *nzcv_pinned);
+    } else {
+        code.mov(nzcv_raw, dword[r15 + offsetof(A64JitState, cpsr_nzcv)]);
+    }
 
     if (code.HasHostFeature(HostFeature::FastBMI2)) {
         const Xbyak::Reg32 tmp = ctx.reg_alloc.ScratchGpr().cvt32();
@@ -2198,18 +2268,31 @@ void A64EmitX64::EmitA64SetNZCVRaw(A64EmitContext& ctx, IR::Inst* inst) {
         code.imul(nzcv_raw, nzcv_raw, NZCV::to_x64_multiplier);
         code.and_(nzcv_raw, NZCV::x64_mask);
     }
-    code.mov(dword[r15 + offsetof(A64JitState, cpsr_nzcv)], nzcv_raw);
+    if (nzcv_pinned) {
+        code.mov(*nzcv_pinned, nzcv_raw);
+    } else {
+        code.mov(dword[r15 + offsetof(A64JitState, cpsr_nzcv)], nzcv_raw);
+    }
 }
 
 void A64EmitX64::EmitA64SetNZCV(A64EmitContext& ctx, IR::Inst* inst) {
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
     const Xbyak::Reg32 to_store = ctx.reg_alloc.UseScratchGpr(args[0]).cvt32();
-    code.mov(dword[r15 + offsetof(A64JitState, cpsr_nzcv)], to_store);
+    if (nzcv_pinned) {
+        code.mov(*nzcv_pinned, to_store);
+    } else {
+        code.mov(dword[r15 + offsetof(A64JitState, cpsr_nzcv)], to_store);
+    }
 }
 
 void A64EmitX64::EmitA64GetW(A64EmitContext& ctx, IR::Inst* inst) {
     const A64::Reg reg = inst->GetArg(0).GetA64RegRef();
     const Xbyak::Reg32 result = ctx.reg_alloc.ScratchGpr().cvt32();
+    if (const auto p = PinnedHost(static_cast<int>(reg))) {
+        code.mov(result, p->cvt32());
+        ctx.reg_alloc.DefineValue(inst, result);
+        return;
+    }
 
     code.mov(result, dword[r15 + offsetof(A64JitState, reg) + sizeof(u64) * static_cast<size_t>(reg)]);
     ctx.reg_alloc.DefineValue(inst, result);
@@ -2218,6 +2301,11 @@ void A64EmitX64::EmitA64GetW(A64EmitContext& ctx, IR::Inst* inst) {
 void A64EmitX64::EmitA64GetX(A64EmitContext& ctx, IR::Inst* inst) {
     const A64::Reg reg = inst->GetArg(0).GetA64RegRef();
     const Xbyak::Reg64 result = ctx.reg_alloc.ScratchGpr();
+    if (const auto p = PinnedHost(static_cast<int>(reg))) {
+        code.mov(result, *p);
+        ctx.reg_alloc.DefineValue(inst, result);
+        return;
+    }
 
     code.mov(result, qword[r15 + offsetof(A64JitState, reg) + sizeof(u64) * static_cast<size_t>(reg)]);
     ctx.reg_alloc.DefineValue(inst, result);
@@ -2252,6 +2340,11 @@ void A64EmitX64::EmitA64GetQ(A64EmitContext& ctx, IR::Inst* inst) {
 
 void A64EmitX64::EmitA64GetSP(A64EmitContext& ctx, IR::Inst* inst) {
     const Xbyak::Reg64 result = ctx.reg_alloc.ScratchGpr();
+    if (const auto p = PinnedHost(31)) {
+        code.mov(result, *p);
+        ctx.reg_alloc.DefineValue(inst, result);
+        return;
+    }
     code.mov(result, qword[r15 + offsetof(A64JitState, sp)]);
     ctx.reg_alloc.DefineValue(inst, result);
 }
@@ -2277,6 +2370,14 @@ void A64EmitX64::EmitA64GetFPSR(A64EmitContext& ctx, IR::Inst* inst) {
 void A64EmitX64::EmitA64SetW(A64EmitContext& ctx, IR::Inst* inst) {
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
     const A64::Reg reg = inst->GetArg(0).GetA64RegRef();
+    if (const auto p = PinnedHost(static_cast<int>(reg))) {
+        if (args[1].IsImmediate()) {
+            code.mov(p->cvt32(), static_cast<u32>(args[1].GetImmediateU64()));
+        } else {
+            code.mov(p->cvt32(), ctx.reg_alloc.UseGpr(args[1]).cvt32());
+        }
+        return;
+    }
     const auto addr = qword[r15 + offsetof(A64JitState, reg) + sizeof(u64) * static_cast<size_t>(reg)];
     if (args[1].FitsInImmediateS32()) {
         code.mov(addr, args[1].GetImmediateS32());
@@ -2291,6 +2392,16 @@ void A64EmitX64::EmitA64SetW(A64EmitContext& ctx, IR::Inst* inst) {
 void A64EmitX64::EmitA64SetX(A64EmitContext& ctx, IR::Inst* inst) {
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
     const A64::Reg reg = inst->GetArg(0).GetA64RegRef();
+    if (const auto p = PinnedHost(static_cast<int>(reg))) {
+        if (args[1].IsImmediate()) {
+            code.mov(*p, args[1].GetImmediateU64());
+        } else if (args[1].IsInXmm()) {
+            code.movq(*p, ctx.reg_alloc.UseXmm(args[1]));
+        } else {
+            code.mov(*p, ctx.reg_alloc.UseGpr(args[1]));
+        }
+        return;
+    }
     const auto addr = qword[r15 + offsetof(A64JitState, reg) + sizeof(u64) * static_cast<size_t>(reg)];
     if (args[1].FitsInImmediateS32()) {
         code.mov(addr, args[1].GetImmediateS32());
@@ -2337,6 +2448,16 @@ void A64EmitX64::EmitA64SetQ(A64EmitContext& ctx, IR::Inst* inst) {
 
 void A64EmitX64::EmitA64SetSP(A64EmitContext& ctx, IR::Inst* inst) {
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
+    if (const auto p = PinnedHost(31)) {
+        if (args[0].IsImmediate()) {
+            code.mov(*p, args[0].GetImmediateU64());
+        } else if (args[0].IsInXmm()) {
+            code.movq(*p, ctx.reg_alloc.UseXmm(args[0]));
+        } else {
+            code.mov(*p, ctx.reg_alloc.UseGpr(args[0]));
+        }
+        return;
+    }
     const auto addr = qword[r15 + offsetof(A64JitState, sp)];
     if (args[0].FitsInImmediateS32()) {
         code.mov(addr, args[0].GetImmediateS32());
@@ -2404,18 +2525,22 @@ void A64EmitX64::EmitA64CallSupervisor(A64EmitContext& ctx, IR::Inst* inst) {
         };
         const auto mfp = mcl::bit_cast<MemberFunctionPointer>(&A64::UserCallbacks::CallSVC);
         if ((mfp.ptr & 1) && mfp.adj == 0) {
+            EmitPinnedStore();
             EmitMovAbs64(code.ABI_PARAM1, reinterpret_cast<u64>(conf.callbacks), RelocKind::CallbackThis);
             code.mov(code.ABI_PARAM2.cvt32(), imm);
             code.mov(rax, qword[code.ABI_PARAM1]);
             code.call(qword[rax + static_cast<u32>(mfp.ptr - 1)]);
+            EmitPinnedLoad();
             code.mov(code.byte[r15 + offsetof(A64JitState, exclusive_state)], u8(0));
             ctx.has_host_call = had_host_call;
             return;
         }
     }
+    EmitPinnedStore();
     Devirtualize<&A64::UserCallbacks::CallSVC>(conf.callbacks).EmitCall(code, [&](RegList param) {
         code.mov(param[0], imm);
     });
+    EmitPinnedLoad();
     // The kernel would have to execute ERET to get here, which would clear exclusive state.
     code.mov(code.byte[r15 + offsetof(A64JitState, exclusive_state)], u8(0));
     // x86Code: no PC=X30 rewrite here. The old one fired after every svc, including svcs not followed by a ret
@@ -2429,24 +2554,30 @@ void A64EmitX64::EmitA64ExceptionRaised(A64EmitContext& ctx, IR::Inst* inst) {
     ASSERT(args[0].IsImmediate() && args[1].IsImmediate());
     const u64 pc = args[0].GetImmediateU64();
     const u64 exception = args[1].GetImmediateU64();
+    EmitPinnedStore();
     Devirtualize<&A64::UserCallbacks::ExceptionRaised>(conf.callbacks).EmitCall(code, [&](RegList param) {
         code.mov(param[0], pc);
         code.mov(param[1], exception);
     });
+    EmitPinnedLoad();
 }
 
 void A64EmitX64::EmitA64DataCacheOperationRaised(A64EmitContext& ctx, IR::Inst* inst) {
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
     ctx.has_host_call = true;
     ctx.reg_alloc.HostCall(nullptr, {}, args[1], args[2]);
+    EmitPinnedStore();
     Devirtualize<&A64::UserCallbacks::DataCacheOperationRaised>(conf.callbacks).EmitCall(code);
+    EmitPinnedLoad();
 }
 
 void A64EmitX64::EmitA64InstructionCacheOperationRaised(A64EmitContext& ctx, IR::Inst* inst) {
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
     ctx.has_host_call = true;
     ctx.reg_alloc.HostCall(nullptr, {}, args[0], args[1]);
+    EmitPinnedStore();
     Devirtualize<&A64::UserCallbacks::InstructionCacheOperationRaised>(conf.callbacks).EmitCall(code);
+    EmitPinnedLoad();
 }
 
 void A64EmitX64::EmitA64DataSynchronizationBarrier(A64EmitContext&, IR::Inst*) {
@@ -2465,7 +2596,9 @@ void A64EmitX64::EmitA64InstructionSynchronizationBarrier(A64EmitContext& ctx, I
 
     ctx.has_host_call = true;
     ctx.reg_alloc.HostCall(nullptr);
+    EmitPinnedStore();
     Devirtualize<&A64::UserCallbacks::InstructionSynchronizationBarrierRaised>(conf.callbacks).EmitCall(code);
+    EmitPinnedLoad();
 }
 
 void A64EmitX64::EmitA64GetCNTFRQ(A64EmitContext& ctx, IR::Inst* inst) {
@@ -2545,11 +2678,13 @@ std::string A64EmitX64::LocationDescriptorToFriendlyName(const IR::LocationDescr
 
 void A64EmitX64::EmitTerminalImpl(IR::Term::Interpret terminal, IR::LocationDescriptor, bool) {
     code.SwitchMxcsrOnExit();
+    EmitPinnedStore();
     Devirtualize<&A64::UserCallbacks::InterpreterFallback>(conf.callbacks).EmitCall(code, [&](RegList param) {
         code.mov(param[0], A64::LocationDescriptor{terminal.next}.PC());
         code.mov(qword[r15 + offsetof(A64JitState, pc)], param[0]);
         code.mov(param[1].cvt32(), terminal.num_instructions);
     });
+    EmitPinnedLoad();  // the interpreter wrote the JitState
     code.ReturnFromRunCode(true);  // TODO: Check cycles
 }
 
@@ -2635,9 +2770,9 @@ void A64EmitX64::EmitTerminalImpl(IR::Term::PopRSBHint, IR::LocationDescriptor, 
     // of the time, a third of all mispredicts in a cold Settings launch). Same steps as GenTerminalHandlers'
     // handler; a stale generation or a mismatch goes to the shared handlers, which do the rest as before.
     if (conf.shared_translations && conf.HasOptimization(OptimizationFlag::FastDispatch)) {
-        code.mov(rbp, qword[r15 + offsetof(A64JitState, pc)]);
+        code.mov(rdx, qword[r15 + offsetof(A64JitState, pc)]);  // Perf 14: not rbp (pinned)
         code.mov(rcx, A64::LocationDescriptor::pc_mask);
-        code.and_(rcx, rbp);
+        code.and_(rcx, rdx);
         code.mov(ebx, dword[r15 + offsetof(A64JitState, fpcr)]);
         code.and_(ebx, A64::LocationDescriptor::fpcr_mask);
         code.shl(rbx, A64::LocationDescriptor::fpcr_shift);

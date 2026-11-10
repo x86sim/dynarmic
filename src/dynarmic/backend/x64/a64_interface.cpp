@@ -64,6 +64,18 @@ static RunCodeCallbacks GenRunCodeCallbacks(A64::UserCallbacks* cb, CodePtr (*Lo
         std::make_unique<ArgCallback>(Devirtualize<&A64::UserCallbacks::AddTicks>(cb)),
         std::make_unique<ArgCallback>(Devirtualize<&A64::UserCallbacks::GetTicksRemaining>(cb)),
         conf.enable_cycle_counting,
+        [conf](BlockOfCode& code) {  // x86Code Perf 14: pinned guest registers back to the JitState
+            for (size_t i = 0; i < 4; i++) {
+                if (const int g = conf.pinned_regs[i]; g >= 0) {
+                    const Xbyak::Reg64 h = i == 0 ? code.r12 : i == 1 ? code.r13 : i == 2 ? code.r14 : code.rbp;
+                    if (g == 32) {
+                        code.mov(code.dword[code.r15 + offsetof(A64JitState, cpsr_nzcv)], h.cvt32());
+                    } else {
+                        code.mov(code.qword[code.r15 + (g == 31 ? offsetof(A64JitState, sp) : offsetof(A64JitState, reg) + 8 * g)], h);
+                    }
+                }
+            }
+        },
     };
 }
 
@@ -74,6 +86,16 @@ static std::function<void(BlockOfCode&)> GenRCP(const A64::UserConfig& conf) {
         }
         if (conf.fastmem_pointer) {
             code.mov(code.r13, *conf.fastmem_pointer);
+        }
+        for (size_t i = 0; i < 4; i++) {  // x86Code Perf 14: pinned guest registers from the JitState
+            if (const int g = conf.pinned_regs[i]; g >= 0) {
+                const Xbyak::Reg64 h = i == 0 ? code.r12 : i == 1 ? code.r13 : i == 2 ? code.r14 : code.rbp;
+                if (g == 32) {
+                    code.mov(h.cvt32(), code.dword[code.r15 + offsetof(A64JitState, cpsr_nzcv)]);
+                } else {
+                    code.mov(h, code.qword[code.r15 + (g == 31 ? offsetof(A64JitState, sp) : offsetof(A64JitState, reg) + 8 * g)]);
+                }
+            }
         }
     };
 }

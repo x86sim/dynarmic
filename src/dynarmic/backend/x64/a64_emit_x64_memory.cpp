@@ -147,7 +147,9 @@ void A64EmitX64::GenFastmemFallbacks() {
                 if (ordered) {
                     code.mfence();
                 }
+                EmitPinnedStore();
                 code.call(memory_read_128);
+                EmitPinnedLoad();
                 if (value_idx != 1) {
                     code.movaps(Xbyak::Xmm{value_idx}, xmm1);
                 }
@@ -164,7 +166,9 @@ void A64EmitX64::GenFastmemFallbacks() {
                 if (value_idx != 1) {
                     code.movaps(xmm1, Xbyak::Xmm{value_idx});
                 }
+                EmitPinnedStore();
                 code.call(memory_write_128);
+                EmitPinnedLoad();
                 if (ordered) {
                     code.mfence();
                 }
@@ -189,7 +193,9 @@ void A64EmitX64::GenFastmemFallbacks() {
                 if (vaddr_idx != code.ABI_PARAM2.getIdx()) {
                     code.mov(code.ABI_PARAM2, Xbyak::Reg64{vaddr_idx});
                 }
+                EmitPinnedStore();
                 code.call(memory_exclusive_write_128);
+                EmitPinnedLoad();
                 ABI_PopCallerSaveRegistersAndAdjustStackExcept(code, HostLoc::RAX);
                 code.ret();
                 PerfMapRegister(exclusive_write_fallbacks[std::make_tuple(ordered, 128, vaddr_idx, value_idx)], code.getCurr(), "a64_exclusive_write_fallback_128");
@@ -208,7 +214,9 @@ void A64EmitX64::GenFastmemFallbacks() {
                     if (ordered) {
                         code.mfence();
                     }
+                    EmitPinnedStore();
                     callback.EmitCall(code);
+                    EmitPinnedLoad();
                     if (value_idx != code.ABI_RETURN.getIdx()) {
                         code.mov(Xbyak::Reg64{value_idx}, code.ABI_RETURN);
                     }
@@ -238,7 +246,9 @@ void A64EmitX64::GenFastmemFallbacks() {
                         }
                     }
                     code.ZeroExtendFrom(bitsize, code.ABI_PARAM3);
+                    EmitPinnedStore();
                     callback.EmitCall(code);
+                    EmitPinnedLoad();
                     if (ordered) {
                         code.mfence();
                     }
@@ -269,7 +279,9 @@ void A64EmitX64::GenFastmemFallbacks() {
                     code.ZeroExtendFrom(bitsize, code.ABI_PARAM3);
                     code.mov(code.ABI_PARAM4, rax);
                     code.ZeroExtendFrom(bitsize, code.ABI_PARAM4);
+                    EmitPinnedStore();
                     callback.EmitCall(code);
+                    EmitPinnedLoad();
                     ABI_PopCallerSaveRegistersAndAdjustStackExcept(code, HostLoc::RAX);
                     code.ret();
                     PerfMapRegister(exclusive_write_fallbacks[std::make_tuple(ordered, bitsize, vaddr_idx, value_idx)], code.getCurr(), fmt::format("a64_exclusive_write_fallback_{}", bitsize));

@@ -126,6 +126,8 @@ protected:
     Xbyak::Label EmitCond(IR::Cond cond);
     BlockDescriptor RegisterBlock(const IR::LocationDescriptor& location_descriptor, CodePtr entrypoint, size_t size);
     void PushRSBHelper(Xbyak::Reg64 loc_desc_reg, Xbyak::Reg64 index_reg, IR::LocationDescriptor target);
+    // x86Code Perf 14: the guest NZCV (x64 flag layout) kept in a host register (UserConfig::pinned_regs entry 32)
+    std::optional<Xbyak::Reg32> nzcv_pinned;
 
     void EmitVerboseDebuggingOutput(RegAlloc& reg_alloc);
 

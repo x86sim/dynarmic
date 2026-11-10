@@ -33,6 +33,8 @@ struct RunCodeCallbacks {
     std::unique_ptr<Callback> AddTicks;
     std::unique_ptr<Callback> GetTicksRemaining;
     bool enable_cycle_counting;
+    // x86Code Perf 14: emitted where RunCode returns to its caller (stores pinned guest registers)
+    std::function<void(BlockOfCode&)> exit_hook;
 };
 
 /// x86Code: the next BlockOfCode is placed at this address when that range is free (shared AOT image).

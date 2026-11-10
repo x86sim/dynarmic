@@ -444,6 +444,9 @@ void BlockOfCode::GenRunCode(std::function<void(BlockOfCode&)> rcp) {
 
     return_from_run_code[MXCSR_ALREADY_EXITED | FORCE_RETURN] = getCurr<const void*>();
     L(return_to_caller_mxcsr_already_exited);
+    if (cb.exit_hook) {
+        cb.exit_hook(*this);
+    }
 
     if (cb.enable_cycle_counting) {
         cb.AddTicks->EmitCall(*this, [this](RegList param) {

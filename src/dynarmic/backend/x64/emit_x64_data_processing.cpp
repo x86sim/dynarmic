@@ -134,13 +134,17 @@ void EmitX64::EmitTestBit(EmitContext& ctx, IR::Inst* inst) {
     ctx.reg_alloc.DefineValue(inst, result);
 }
 
-static void EmitConditionalSelect(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst, int bitsize) {
+static void EmitConditionalSelect(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst, int bitsize, std::optional<Xbyak::Reg32> nzcv_pinned) {
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
     const Xbyak::Reg32 nzcv = ctx.reg_alloc.ScratchGpr(HostLoc::RAX).cvt32();
     const Xbyak::Reg then_ = ctx.reg_alloc.UseGpr(args[1]).changeBit(bitsize);
     const Xbyak::Reg else_ = ctx.reg_alloc.UseScratchGpr(args[2]).changeBit(bitsize);
 
-    code.mov(nzcv, dword[r15 + code.GetJitStateInfo().offsetof_cpsr_nzcv]);
+    if (nzcv_pinned) {
+        code.mov(nzcv, *nzcv_pinned);
+    } else {
+        code.mov(nzcv, dword[r15 + code.GetJitStateInfo().offsetof_cpsr_nzcv]);
+    }
 
     code.LoadRequiredFlagsForCondFromRax(args[0].GetImmediateCond());
 
@@ -199,15 +203,15 @@ static void EmitConditionalSelect(BlockOfCode& code, EmitContext& ctx, IR::Inst*
 }
 
 void EmitX64::EmitConditionalSelect32(EmitContext& ctx, IR::Inst* inst) {
-    EmitConditionalSelect(code, ctx, inst, 32);
+    EmitConditionalSelect(code, ctx, inst, 32, nzcv_pinned);
 }
 
 void EmitX64::EmitConditionalSelect64(EmitContext& ctx, IR::Inst* inst) {
-    EmitConditionalSelect(code, ctx, inst, 64);
+    EmitConditionalSelect(code, ctx, inst, 64, nzcv_pinned);
 }
 
 void EmitX64::EmitConditionalSelectNZCV(EmitContext& ctx, IR::Inst* inst) {
-    EmitConditionalSelect(code, ctx, inst, 32);
+    EmitConditionalSelect(code, ctx, inst, 32, nzcv_pinned);
 }
 
 static void EmitExtractRegister(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst, int bit_size) {

@@ -520,7 +520,11 @@ void EmitX64::EmitAddCycles(size_t cycles) {
 Xbyak::Label EmitX64::EmitCond(IR::Cond cond) {
     Xbyak::Label pass;
 
-    code.mov(eax, dword[r15 + code.GetJitStateInfo().offsetof_cpsr_nzcv]);
+    if (nzcv_pinned) {
+        code.mov(eax, *nzcv_pinned);
+    } else {
+        code.mov(eax, dword[r15 + code.GetJitStateInfo().offsetof_cpsr_nzcv]);
+    }
 
     code.LoadRequiredFlagsForCondFromRax(cond);
 

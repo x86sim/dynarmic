@@ -177,6 +177,23 @@ protected:
         return 0xB848u | (A64::LocationDescriptor{target_desc}.PC() << 16);
     }
     void ClearFastDispatchTable();
+    // x86Code Perf 14: pinned guest registers (UserConfig::pinned_regs) in r12/r13/r14
+    static size_t GuestRegOffset(int guest) {
+        return guest == 32 ? offsetof(A64JitState, cpsr_nzcv) : guest == 31 ? offsetof(A64JitState, sp) : offsetof(A64JitState, reg) + sizeof(u64) * static_cast<size_t>(guest);
+    }
+    std::optional<Xbyak::Reg64> PinnedHost(int guest) const {
+        static const Xbyak::Reg64 hosts[4] = {Xbyak::util::r12, Xbyak::util::r13, Xbyak::util::r14, Xbyak::util::rbp};
+        for (size_t i = 0; i < 4; i++) {
+            if (conf.pinned_regs[i] == guest) {
+                return hosts[i];
+            }
+        }
+        return std::nullopt;
+    }
+    void EmitPinnedStore();
+    void EmitPinnedLoad();
+    void LoadGuestX(const Xbyak::Reg64& dst, int guest);
+    void StoreGuestX(int guest, const Xbyak::Reg64& src);
     FastDispatchEntry* FastDispatchSlot(u64 location_descriptor) const;
 
     void (*memory_read_128)();

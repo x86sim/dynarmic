@@ -315,6 +315,12 @@ struct UserConfig {
     /// The embedder guarantees the code there is the same in every process (the libsystem stub dylibs).
     std::uint64_t persist_svc_lo = 0, persist_svc_hi = 0;
 
+    /// x86Code Perf 14: guest registers kept in host r12, r13, r14, rbp across blocks (0-30: Xn, 31: SP, 32: NZCV;
+    /// -1: none).
+    /// Stored to / loaded from the JitState around everything that reads guest registers from C++ (svc, exceptions,
+    /// the interpreter, memory fallbacks, every exit to the dispatcher's caller) and loaded on RunCode entry.
+    std::array<std::int8_t, 4> pinned_regs{-1, -1, -1, -1};
+
     /// x86Code Perf 9: when false, a LinkBlock to a higher PC than its block's start does not check halt_reason (the
     /// backward links of every cycle still do).
     bool halt_check_all_links = false;
