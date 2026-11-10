@@ -315,6 +315,10 @@ struct UserConfig {
     /// The embedder guarantees the code there is the same in every process (the libsystem stub dylibs).
     std::uint64_t persist_svc_lo = 0, persist_svc_hi = 0;
 
+    /// x86Code Perf 9: when false, a LinkBlock to a higher PC than its block's start does not check halt_reason (the
+    /// backward links of every cycle still do).
+    bool halt_check_all_links = false;
+
     /// x86Code: when non-zero, the block at this guest PC is emitted as a hand-written x86 objc_msgSend
     /// cache probe (no A64 translate, no CallSVC). Hits FastDispatch to the IMP; misses go to uncached.
     std::uint64_t inline_objc_msgsend = 0;

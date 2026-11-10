@@ -2552,7 +2552,16 @@ void A64EmitX64::EmitTerminalImpl(IR::Term::ReturnToDispatch, IR::LocationDescri
     code.ReturnFromRunCode();
 }
 
-void A64EmitX64::EmitTerminalImpl(IR::Term::LinkBlock terminal, IR::LocationDescriptor, bool is_single_step) {
+void A64EmitX64::EmitTerminalImpl(IR::Term::LinkBlock terminal, IR::LocationDescriptor initial_location, bool is_single_step) {
+    // x86Code Perf 9: a forward link (target above this block's start) skips the halt check. Any cycle of direct
+    // links has a link whose target is at or below its block's start, and that one still checks, so a thread in a
+    // loop still sees HaltExecution (indirect branches never checked). X86CODE_A64_HALT_ALL=1 via conf: every link.
+    if (!conf.enable_cycle_counting && !conf.halt_check_all_links && !is_single_step &&
+        conf.HasOptimization(OptimizationFlag::BlockLinking) &&
+        A64::LocationDescriptor{terminal.next}.PC() > A64::LocationDescriptor{initial_location}.PC()) {
+        EmitTerminalImpl(IR::Term::LinkBlockFast{terminal.next}, initial_location, is_single_step);
+        return;
+    }
     if (!conf.HasOptimization(OptimizationFlag::BlockLinking) || is_single_step) {
         code.mov(rax, A64::LocationDescriptor{terminal.next}.PC());
         code.mov(qword[r15 + offsetof(A64JitState, pc)], rax);
