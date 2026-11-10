@@ -2598,6 +2598,33 @@ void A64EmitX64::EmitTerminalImpl(IR::Term::PopRSBHint, IR::LocationDescriptor, 
         return;
     }
 
+    // x86Code Perf 7: the shared pop handler's hit path inline, so every return site has its own indirect jump
+    // (the host's predictor keys on the jump's address: one shared `jmp rax` for every guest return mispredicted 39%
+    // of the time, a third of all mispredicts in a cold Settings launch). Same steps as GenTerminalHandlers'
+    // handler; a stale generation or a mismatch goes to the shared handlers, which do the rest as before.
+    if (conf.shared_translations && conf.HasOptimization(OptimizationFlag::FastDispatch)) {
+        code.mov(rbp, qword[r15 + offsetof(A64JitState, pc)]);
+        code.mov(rcx, A64::LocationDescriptor::pc_mask);
+        code.and_(rcx, rbp);
+        code.mov(ebx, dword[r15 + offsetof(A64JitState, fpcr)]);
+        code.and_(ebx, A64::LocationDescriptor::fpcr_mask);
+        code.shl(rbx, A64::LocationDescriptor::fpcr_shift);
+        code.or_(rbx, rcx);
+        code.mov(rcx, qword[r15 + offsetof(A64JitState, invalidate_gen_ptr)]);
+        code.mov(rcx, qword[rcx]);
+        code.cmp(rcx, qword[r15 + offsetof(A64JitState, rsb_gen)]);
+        code.jne(terminal_handler_pop_rsb_hint);  // resets the RSB, then dispatches
+        code.mov(eax, dword[r15 + offsetof(A64JitState, rsb_ptr)]);
+        code.sub(eax, 1);
+        code.and_(eax, u32(A64JitState::RSBPtrMask));
+        code.mov(dword[r15 + offsetof(A64JitState, rsb_ptr)], eax);
+        code.cmp(rbx, qword[r15 + offsetof(A64JitState, rsb_location_descriptors) + rax * sizeof(u64)]);
+        code.jne(terminal_handler_fast_dispatch_hint);
+        code.mov(rax, qword[r15 + offsetof(A64JitState, rsb_codeptrs) + rax * sizeof(u64)]);
+        code.jmp(rax);
+        return;
+    }
+
     code.jmp(terminal_handler_pop_rsb_hint);
 }
 
