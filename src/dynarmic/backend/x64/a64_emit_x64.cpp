@@ -270,8 +270,20 @@ A64EmitX64::BlockDescriptor A64EmitX64::Emit(IR::Block& block) {
 
     ASSERT(block.GetCondition() == IR::Cond::AL);
 
+    host_flags_hold_nzcv = false;
+    IR::Inst* prev_inst = nullptr;
+    IR::Inst* prev_prev_inst = nullptr;
     for (auto iter = block.begin(); iter != block.end(); ++iter) {
         IR::Inst* inst = &*iter;
+
+        // x86Code Perf 21: SetNZCV of GetNZCVFromOp(op) right after op and its pseudo-op leaves the host flags = NZCV
+        bool flags_after = false;
+        if (inst->GetOpcode() == IR::Opcode::A64SetNZCV && !inst->GetArg(0).IsImmediate()) {
+            IR::Inst* nz = inst->GetArg(0).GetInst();
+            flags_after = nz->GetOpcode() == IR::Opcode::GetNZCVFromOp && nz == prev_inst && !nz->GetArg(0).IsImmediate() &&
+                          nz->GetArg(0).GetInst() == prev_prev_inst;
+        }
+        host_flags_hold_nzcv = false;
 
         // Call the relevant Emit* member function.
         switch (inst->GetOpcode()) {
@@ -295,6 +307,9 @@ A64EmitX64::BlockDescriptor A64EmitX64::Emit(IR::Block& block) {
         }
 
         ctx.reg_alloc.EndOfAllocScope();
+        host_flags_hold_nzcv = flags_after;
+        prev_prev_inst = prev_inst;
+        prev_inst = inst;
 
         if (conf.very_verbose_debugging_output) {
             EmitVerboseDebuggingOutput(reg_alloc);
@@ -307,6 +322,7 @@ A64EmitX64::BlockDescriptor A64EmitX64::Emit(IR::Block& block) {
         EmitAddCycles(block.CycleCount());
     }
     EmitX64::EmitTerminal(block.GetTerminal(), ctx.Location().SetSingleStepping(false), ctx.IsSingleStep());
+    host_flags_hold_nzcv = false;
     code.int3();
 
     for (auto& deferred_emit : ctx.deferred_emits) {
@@ -2820,6 +2836,7 @@ void A64EmitX64::EmitTerminalImpl(IR::Term::If terminal, IR::LocationDescriptor 
 }
 
 void A64EmitX64::EmitTerminalImpl(IR::Term::CheckBit terminal, IR::LocationDescriptor initial_location, bool is_single_step) {
+    host_flags_hold_nzcv = false;  // the cmp below
     Xbyak::Label fail;
     code.cmp(code.byte[rsp + ABI_SHADOW_SPACE + offsetof(StackLayout, check_bit)], u8(0));
     code.jz(fail);
@@ -2829,6 +2846,7 @@ void A64EmitX64::EmitTerminalImpl(IR::Term::CheckBit terminal, IR::LocationDescr
 }
 
 void A64EmitX64::EmitTerminalImpl(IR::Term::CheckHalt terminal, IR::LocationDescriptor initial_location, bool is_single_step) {
+    host_flags_hold_nzcv = false;  // the cmp below
     code.cmp(dword[r15 + JSO(halt_reason)], 0);
     code.jne(code.GetForceReturnFromRunCodeAddress());
     EmitTerminal(terminal.else_, initial_location, is_single_step);

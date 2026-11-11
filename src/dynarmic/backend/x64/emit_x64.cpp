@@ -520,6 +520,25 @@ void EmitX64::EmitAddCycles(size_t cycles) {
 Xbyak::Label EmitX64::EmitCond(IR::Cond cond) {
     Xbyak::Label pass;
 
+    if (host_flags_hold_nzcv) {
+        // x86Code Perf 21: CF is the guest's C here (subtractions inverted it before capturing), ZF/SF/OF are Z/N/V
+        switch (cond) {
+        case IR::Cond::EQ: code.jz(pass); return pass;
+        case IR::Cond::NE: code.jnz(pass); return pass;
+        case IR::Cond::CS: code.jc(pass); return pass;
+        case IR::Cond::CC: code.jnc(pass); return pass;
+        case IR::Cond::MI: code.js(pass); return pass;
+        case IR::Cond::PL: code.jns(pass); return pass;
+        case IR::Cond::VS: code.jo(pass); return pass;
+        case IR::Cond::VC: code.jno(pass); return pass;
+        case IR::Cond::GE: code.jge(pass); return pass;
+        case IR::Cond::LT: code.jl(pass); return pass;
+        case IR::Cond::GT: code.jg(pass); return pass;
+        case IR::Cond::LE: code.jle(pass); return pass;
+        default: break;  // HI/LS (C and Z together): from the stored NZCV below
+        }
+    }
+
     if (nzcv_pinned) {
         code.mov(eax, *nzcv_pinned);
     } else {

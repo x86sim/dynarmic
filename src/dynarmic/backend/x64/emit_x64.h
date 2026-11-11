@@ -128,6 +128,9 @@ protected:
     void PushRSBHelper(Xbyak::Reg64 loc_desc_reg, Xbyak::Reg64 index_reg, IR::LocationDescriptor target);
     // x86Sim Perf 14: the guest NZCV (x64 flag layout) kept in a host register (UserConfig::pinned_regs entry 32)
     std::optional<Xbyak::Reg32> nzcv_pinned;
+    // x86Code Perf 21: the host flags still are the guest NZCV just stored (SetNZCV of the flags captured right after
+    // the last arithmetic, nothing emitted since): EmitCond branches on them directly
+    bool host_flags_hold_nzcv = false;
 
     void EmitVerboseDebuggingOutput(RegAlloc& reg_alloc);
 
