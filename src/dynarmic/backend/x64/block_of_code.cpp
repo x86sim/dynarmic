@@ -370,6 +370,9 @@ void BlockOfCode::GenRunCode(std::function<void(BlockOfCode&)> rcp) {
     ABI_PushCalleeSaveRegistersAndAdjustStack(*this, sizeof(StackLayout));
 
     mov(r15, ABI_PARAM1);
+    if (jsi.r15_bias) {
+        add(r15, static_cast<u32>(jsi.r15_bias));  // x86Code Perf 20
+    }
     mov(rbx, ABI_PARAM2);  // save temporarily in non-volatile register
 
     if (cb.enable_cycle_counting) {
@@ -392,6 +395,9 @@ void BlockOfCode::GenRunCode(std::function<void(BlockOfCode&)> rcp) {
     ABI_PushCalleeSaveRegistersAndAdjustStack(*this, sizeof(StackLayout));
 
     mov(r15, ABI_PARAM1);
+    if (jsi.r15_bias) {
+        add(r15, static_cast<u32>(jsi.r15_bias));  // x86Code Perf 20
+    }
 
     if (cb.enable_cycle_counting) {
         mov(qword[rsp + ABI_SHADOW_SPACE + offsetof(StackLayout, cycles_to_run)], 1);

@@ -69,9 +69,9 @@ static RunCodeCallbacks GenRunCodeCallbacks(A64::UserCallbacks* cb, CodePtr (*Lo
                 if (const int g = conf.pinned_regs[i]; g >= 0) {
                     const Xbyak::Reg64 h = i == 0 ? code.r12 : i == 1 ? code.r13 : i == 2 ? code.r14 : code.rbp;
                     if (g == 32) {
-                        code.mov(code.dword[code.r15 + offsetof(A64JitState, cpsr_nzcv)], h.cvt32());
+                        code.mov(code.dword[code.r15 + JSO(cpsr_nzcv)], h.cvt32());
                     } else {
-                        code.mov(code.qword[code.r15 + (g == 31 ? offsetof(A64JitState, sp) : offsetof(A64JitState, reg) + 8 * g)], h);
+                        code.mov(code.qword[code.r15 + (g == 31 ? JSO(sp) : JSO(reg) + 8 * g)], h);
                     }
                 }
             }
@@ -91,9 +91,9 @@ static std::function<void(BlockOfCode&)> GenRCP(const A64::UserConfig& conf) {
             if (const int g = conf.pinned_regs[i]; g >= 0) {
                 const Xbyak::Reg64 h = i == 0 ? code.r12 : i == 1 ? code.r13 : i == 2 ? code.r14 : code.rbp;
                 if (g == 32) {
-                    code.mov(h.cvt32(), code.dword[code.r15 + offsetof(A64JitState, cpsr_nzcv)]);
+                    code.mov(h.cvt32(), code.dword[code.r15 + JSO(cpsr_nzcv)]);
                 } else {
-                    code.mov(h, code.qword[code.r15 + (g == 31 ? offsetof(A64JitState, sp) : offsetof(A64JitState, reg) + 8 * g)]);
+                    code.mov(h, code.qword[code.r15 + (g == 31 ? JSO(sp) : JSO(reg) + 8 * g)]);
                 }
             }
         }
@@ -113,7 +113,7 @@ static Optimization::PolyfillOptions GenPolyfillOptions(const BlockOfCode& code)
 struct Jit::SharedCode final {
     explicit SharedCode(UserConfig conf_)
             : conf(conf_)
-            , block_of_code(GenRunCodeCallbacks(conf.callbacks, &LookupBlockThunk, nullptr, conf), JitStateInfo{A64JitState{}}, conf.code_cache_size, GenRCP(conf))
+            , block_of_code(GenRunCodeCallbacks(conf.callbacks, &LookupBlockThunk, nullptr, conf), JitStateInfo{A64JitState{}, static_cast<size_t>(A64JitState::kR15Bias)}, conf.code_cache_size, GenRCP(conf))
             , emitter(block_of_code, conf, nullptr)
             , polyfill_options(GenPolyfillOptions(block_of_code)) {
         emitter.shared_invalidate_gen = &invalidate_gen;

@@ -377,7 +377,7 @@ void EmitExclusiveLock(BlockOfCode& code, const UserConfig& conf, Xbyak::Reg64 p
     // x86Sim: shared translations load the lock from JitState so the Imm64 is not baked into
     // persistable blocks (warm ASLR would leave a stale host pointer → MAPERR on ldxr/stxr).
     if (SharedTranslations(conf)) {
-        code.mov(pointer, qword[r15 + offsetof(A64JitState, excl_lock_ptr)]);
+        code.mov(pointer, qword[r15 + JSO(excl_lock_ptr)]);
     } else {
         code.mov(pointer, mcl::bit_cast<u64>(GetExclusiveMonitorLockPointer(conf.global_monitor)));
     }
@@ -391,7 +391,7 @@ void EmitExclusiveUnlock(BlockOfCode& code, const UserConfig& conf, Xbyak::Reg64
     }
 
     if (SharedTranslations(conf)) {
-        code.mov(pointer, qword[r15 + offsetof(A64JitState, excl_lock_ptr)]);
+        code.mov(pointer, qword[r15 + JSO(excl_lock_ptr)]);
     } else {
         code.mov(pointer, mcl::bit_cast<u64>(GetExclusiveMonitorLockPointer(conf.global_monitor)));
     }
@@ -401,7 +401,7 @@ void EmitExclusiveUnlock(BlockOfCode& code, const UserConfig& conf, Xbyak::Reg64
 template<typename UserConfig>
 void EmitExclusiveSlotPointer(BlockOfCode& code, const UserConfig& conf, Xbyak::Reg64 reg, bool value) {
     if (SharedTranslations(conf)) {
-        code.mov(reg, qword[r15 + (value ? offsetof(A64JitState, excl_value_ptr) : offsetof(A64JitState, excl_address_ptr))]);
+        code.mov(reg, qword[r15 + (value ? JSO(excl_value_ptr) : JSO(excl_address_ptr))]);
     } else if (value) {
         code.mov(reg, mcl::bit_cast<u64>(GetExclusiveMonitorValuePointer(conf.global_monitor, conf.processor_id)));
     } else {
@@ -425,11 +425,11 @@ void EmitExclusiveTestAndClear(BlockOfCode& code, const UserConfig& conf, Xbyak:
         Xbyak::Label ok;
         if (shared) {
             // Base + index*8 from JitState — no ASLR Imm64 in the persisted slab.
-            code.mov(pointer, qword[r15 + offsetof(A64JitState, excl_addresses_base)]);
+            code.mov(pointer, qword[r15 + JSO(excl_addresses_base)]);
             if (processor_index != 0) {
                 code.add(pointer, static_cast<u32>(processor_index * sizeof(u64)));
             }
-            code.cmp(pointer, qword[r15 + offsetof(A64JitState, excl_address_ptr)]);
+            code.cmp(pointer, qword[r15 + JSO(excl_address_ptr)]);
             code.je(ok);
         } else {
             code.mov(pointer, mcl::bit_cast<u64>(GetExclusiveMonitorAddressPointer(conf.global_monitor, processor_index)));

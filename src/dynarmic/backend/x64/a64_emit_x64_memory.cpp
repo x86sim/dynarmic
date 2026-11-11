@@ -336,7 +336,7 @@ void A64EmitX64::EmitA64WriteMemory128(A64EmitContext& ctx, IR::Inst* inst) {
 }
 
 void A64EmitX64::EmitA64ClearExclusive(A64EmitContext&, IR::Inst*) {
-    code.mov(code.byte[r15 + offsetof(A64JitState, exclusive_state)], u8(0));
+    code.mov(code.byte[r15 + JSO(exclusive_state)], u8(0));
 }
 
 void A64EmitX64::EmitA64ExclusiveReadMemory8(A64EmitContext& ctx, IR::Inst* inst) {
@@ -428,14 +428,14 @@ void A64EmitX64::EmitCheckMemoryAbort(A64EmitContext&, IR::Inst* inst, Xbyak::La
 
     const A64::LocationDescriptor current_location{IR::LocationDescriptor{inst->GetArg(0).GetU64()}};
 
-    code.test(dword[r15 + offsetof(A64JitState, halt_reason)], static_cast<u32>(HaltReason::MemoryAbort));
+    code.test(dword[r15 + JSO(halt_reason)], static_cast<u32>(HaltReason::MemoryAbort));
     if (end) {
         code.jz(*end, code.T_NEAR);
     } else {
         code.jz(skip, code.T_NEAR);
     }
     code.mov(rax, current_location.PC());
-    code.mov(qword[r15 + offsetof(A64JitState, pc)], rax);
+    code.mov(qword[r15 + JSO(pc)], rax);
     code.ForceReturnFromRunCode();
     code.L(skip);
 }

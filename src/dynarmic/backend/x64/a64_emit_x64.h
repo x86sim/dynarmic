@@ -179,7 +179,7 @@ protected:
     void ClearFastDispatchTable();
     // x86Sim Perf 14: pinned guest registers (UserConfig::pinned_regs) in r12/r13/r14
     static size_t GuestRegOffset(int guest) {
-        return guest == 32 ? offsetof(A64JitState, cpsr_nzcv) : guest == 31 ? offsetof(A64JitState, sp) : offsetof(A64JitState, reg) + sizeof(u64) * static_cast<size_t>(guest);
+        return guest == 32 ? JSO(cpsr_nzcv) : guest == 31 ? JSO(sp) : JSO(reg) + sizeof(u64) * static_cast<size_t>(guest);
     }
     std::optional<Xbyak::Reg64> PinnedHost(int guest) const {
         static const Xbyak::Reg64 hosts[4] = {Xbyak::util::r12, Xbyak::util::r13, Xbyak::util::r14, Xbyak::util::rbp};

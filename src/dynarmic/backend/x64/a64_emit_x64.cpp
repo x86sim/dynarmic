@@ -352,11 +352,11 @@ A64EmitX64::BlockDescriptor A64EmitX64::EmitInlineObjCMsgSend(IR::LocationDescri
     constexpr u64 kCacheOffset = 0x10;
 
     const auto reg_off = [](size_t i) {
-        return offsetof(A64JitState, reg) + sizeof(u64) * i;
+        return JSO(reg) + sizeof(u64) * i;
     };
     const auto vec_off = [](size_t i) {
         // Each V register is 2×u64 in A64JitState::vec.
-        return offsetof(A64JitState, vec) + sizeof(u64) * 2 * i;
+        return JSO(vec) + sizeof(u64) * 2 * i;
     };
 
     Xbyak::Label nil_path, tagged_path, miss_path, hit_path, wrap_setup, wrap_loop, probe_loop;
@@ -432,8 +432,8 @@ A64EmitX64::BlockDescriptor A64EmitX64::EmitInlineObjCMsgSend(IR::LocationDescri
         code.lock();
         code.inc(qword[rbx]);
     }
-    code.mov(qword[r15 + offsetof(A64JitState, pc)], rax);
-    code.mov(code.byte[r15 + offsetof(A64JitState, exclusive_state)], u8(0));
+    code.mov(qword[r15 + JSO(pc)], rax);
+    code.mov(code.byte[r15 + JSO(exclusive_state)], u8(0));
     if (conf.HasOptimization(OptimizationFlag::FastDispatch)) {
         code.jmp(terminal_handler_fast_dispatch_hint);
     } else {
@@ -448,8 +448,8 @@ A64EmitX64::BlockDescriptor A64EmitX64::EmitInlineObjCMsgSend(IR::LocationDescri
     }
     // x15/x16 already set; go to __objc_msgSend_uncached
     code.mov(rax, conf.inline_objc_uncached);
-    code.mov(qword[r15 + offsetof(A64JitState, pc)], rax);
-    code.mov(code.byte[r15 + offsetof(A64JitState, exclusive_state)], u8(0));
+    code.mov(qword[r15 + JSO(pc)], rax);
+    code.mov(code.byte[r15 + JSO(exclusive_state)], u8(0));
     if (conf.HasOptimization(OptimizationFlag::FastDispatch)) {
         code.jmp(terminal_handler_fast_dispatch_hint);
     } else {
@@ -463,8 +463,8 @@ A64EmitX64::BlockDescriptor A64EmitX64::EmitInlineObjCMsgSend(IR::LocationDescri
         code.inc(qword[rbx]);
     }
     code.mov(rax, conf.inline_objc_tagged ? conf.inline_objc_tagged : conf.inline_objc_uncached);
-    code.mov(qword[r15 + offsetof(A64JitState, pc)], rax);
-    code.mov(code.byte[r15 + offsetof(A64JitState, exclusive_state)], u8(0));
+    code.mov(qword[r15 + JSO(pc)], rax);
+    code.mov(code.byte[r15 + JSO(exclusive_state)], u8(0));
     if (conf.HasOptimization(OptimizationFlag::FastDispatch)) {
         code.jmp(terminal_handler_fast_dispatch_hint);
     } else {
@@ -481,8 +481,8 @@ A64EmitX64::BlockDescriptor A64EmitX64::EmitInlineObjCMsgSend(IR::LocationDescri
         code.mov(qword[r15 + vec_off(i) + 8], u64(0));
     }
     LoadGuestX(rax, 30);
-    code.mov(qword[r15 + offsetof(A64JitState, pc)], rax);
-    code.mov(code.byte[r15 + offsetof(A64JitState, exclusive_state)], u8(0));
+    code.mov(qword[r15 + JSO(pc)], rax);
+    code.mov(code.byte[r15 + JSO(exclusive_state)], u8(0));
     code.jmp(terminal_handler_pop_rsb_hint);
 
     code.int3();
@@ -2084,10 +2084,10 @@ void A64EmitX64::GenTerminalHandlers() {
     const auto calculate_location_descriptor = [this] {
         // This calculation has to match up with A64::LocationDescriptor::UniqueHash
         // TODO: Optimization is available here based on known state of fpcr.
-        code.mov(rdx, qword[r15 + offsetof(A64JitState, pc)]);
+        code.mov(rdx, qword[r15 + JSO(pc)]);
         code.mov(rcx, A64::LocationDescriptor::pc_mask);
         code.and_(rcx, rdx);
-        code.mov(ebx, dword[r15 + offsetof(A64JitState, fpcr)]);
+        code.mov(ebx, dword[r15 + JSO(fpcr)]);
         code.and_(ebx, A64::LocationDescriptor::fpcr_mask);
         code.shl(rbx, A64::LocationDescriptor::fpcr_shift);
         code.or_(rbx, rcx);
@@ -2100,30 +2100,30 @@ void A64EmitX64::GenTerminalHandlers() {
     calculate_location_descriptor();
     Xbyak::Label rsb_gen_stale;
     if (conf.shared_translations && conf.HasOptimization(OptimizationFlag::FastDispatch)) {
-        code.mov(rcx, qword[r15 + offsetof(A64JitState, invalidate_gen_ptr)]);
+        code.mov(rcx, qword[r15 + JSO(invalidate_gen_ptr)]);
         code.mov(rcx, qword[rcx]);
-        code.cmp(rcx, qword[r15 + offsetof(A64JitState, rsb_gen)]);
+        code.cmp(rcx, qword[r15 + JSO(rsb_gen)]);
         code.jne(rsb_gen_stale, code.T_NEAR);
     }
-    code.mov(eax, dword[r15 + offsetof(A64JitState, rsb_ptr)]);
+    code.mov(eax, dword[r15 + JSO(rsb_ptr)]);
     code.sub(eax, 1);
     code.and_(eax, u32(A64JitState::RSBPtrMask));
-    code.mov(dword[r15 + offsetof(A64JitState, rsb_ptr)], eax);
-    code.cmp(rbx, qword[r15 + offsetof(A64JitState, rsb_location_descriptors) + rax * sizeof(u64)]);
+    code.mov(dword[r15 + JSO(rsb_ptr)], eax);
+    code.cmp(rbx, qword[r15 + JSO(rsb_location_descriptors) + rax * sizeof(u64)]);
     if (conf.HasOptimization(OptimizationFlag::FastDispatch)) {
         code.jne(rsb_cache_miss, code.T_NEAR);
     } else {
         code.jne(code.GetReturnFromRunCodeAddress());
     }
-    code.mov(rax, qword[r15 + offsetof(A64JitState, rsb_codeptrs) + rax * sizeof(u64)]);
+    code.mov(rax, qword[r15 + JSO(rsb_codeptrs) + rax * sizeof(u64)]);
     code.jmp(rax);
     if (conf.shared_translations && conf.HasOptimization(OptimizationFlag::FastDispatch)) {
         // a newer invalidation: forget every entry (ResetRSB), take this generation, dispatch this return normally
         code.L(rsb_gen_stale);
-        code.mov(qword[r15 + offsetof(A64JitState, rsb_gen)], rcx);
+        code.mov(qword[r15 + JSO(rsb_gen)], rcx);
         code.mov(rax, u64(0xFFFFFFFFFFFFFFFFull));
         for (size_t i = 0; i < A64JitState::RSBSize; i++) {
-            code.mov(qword[r15 + offsetof(A64JitState, rsb_location_descriptors) + i * sizeof(u64)], rax);
+            code.mov(qword[r15 + JSO(rsb_location_descriptors) + i * sizeof(u64)], rax);
         }
         code.jmp(rsb_cache_miss, code.T_NEAR);
     }
@@ -2225,7 +2225,7 @@ void A64EmitX64::EmitA64GetCFlag(A64EmitContext& ctx, IR::Inst* inst) {
     if (nzcv_pinned) {
         code.mov(result, *nzcv_pinned);
     } else {
-        code.mov(result, dword[r15 + offsetof(A64JitState, cpsr_nzcv)]);
+        code.mov(result, dword[r15 + JSO(cpsr_nzcv)]);
     }
     code.shr(result, NZCV::x64_c_flag_bit);
     code.and_(result, 1);
@@ -2238,7 +2238,7 @@ void A64EmitX64::EmitA64GetNZCVRaw(A64EmitContext& ctx, IR::Inst* inst) {
     if (nzcv_pinned) {
         code.mov(nzcv_raw, *nzcv_pinned);
     } else {
-        code.mov(nzcv_raw, dword[r15 + offsetof(A64JitState, cpsr_nzcv)]);
+        code.mov(nzcv_raw, dword[r15 + JSO(cpsr_nzcv)]);
     }
 
     if (code.HasHostFeature(HostFeature::FastBMI2)) {
@@ -2271,7 +2271,7 @@ void A64EmitX64::EmitA64SetNZCVRaw(A64EmitContext& ctx, IR::Inst* inst) {
     if (nzcv_pinned) {
         code.mov(*nzcv_pinned, nzcv_raw);
     } else {
-        code.mov(dword[r15 + offsetof(A64JitState, cpsr_nzcv)], nzcv_raw);
+        code.mov(dword[r15 + JSO(cpsr_nzcv)], nzcv_raw);
     }
 }
 
@@ -2281,7 +2281,7 @@ void A64EmitX64::EmitA64SetNZCV(A64EmitContext& ctx, IR::Inst* inst) {
     if (nzcv_pinned) {
         code.mov(*nzcv_pinned, to_store);
     } else {
-        code.mov(dword[r15 + offsetof(A64JitState, cpsr_nzcv)], to_store);
+        code.mov(dword[r15 + JSO(cpsr_nzcv)], to_store);
     }
 }
 
@@ -2294,7 +2294,7 @@ void A64EmitX64::EmitA64GetW(A64EmitContext& ctx, IR::Inst* inst) {
         return;
     }
 
-    code.mov(result, dword[r15 + offsetof(A64JitState, reg) + sizeof(u64) * static_cast<size_t>(reg)]);
+    code.mov(result, dword[r15 + JSO(reg) + sizeof(u64) * static_cast<size_t>(reg)]);
     ctx.reg_alloc.DefineValue(inst, result);
 }
 
@@ -2307,13 +2307,13 @@ void A64EmitX64::EmitA64GetX(A64EmitContext& ctx, IR::Inst* inst) {
         return;
     }
 
-    code.mov(result, qword[r15 + offsetof(A64JitState, reg) + sizeof(u64) * static_cast<size_t>(reg)]);
+    code.mov(result, qword[r15 + JSO(reg) + sizeof(u64) * static_cast<size_t>(reg)]);
     ctx.reg_alloc.DefineValue(inst, result);
 }
 
 void A64EmitX64::EmitA64GetS(A64EmitContext& ctx, IR::Inst* inst) {
     const A64::Vec vec = inst->GetArg(0).GetA64VecRef();
-    const auto addr = qword[r15 + offsetof(A64JitState, vec) + sizeof(u64) * 2 * static_cast<size_t>(vec)];
+    const auto addr = qword[r15 + JSO(vec) + sizeof(u64) * 2 * static_cast<size_t>(vec)];
 
     const Xbyak::Xmm result = ctx.reg_alloc.ScratchXmm();
     code.movd(result, addr);
@@ -2322,7 +2322,7 @@ void A64EmitX64::EmitA64GetS(A64EmitContext& ctx, IR::Inst* inst) {
 
 void A64EmitX64::EmitA64GetD(A64EmitContext& ctx, IR::Inst* inst) {
     const A64::Vec vec = inst->GetArg(0).GetA64VecRef();
-    const auto addr = qword[r15 + offsetof(A64JitState, vec) + sizeof(u64) * 2 * static_cast<size_t>(vec)];
+    const auto addr = qword[r15 + JSO(vec) + sizeof(u64) * 2 * static_cast<size_t>(vec)];
 
     const Xbyak::Xmm result = ctx.reg_alloc.ScratchXmm();
     code.movq(result, addr);
@@ -2331,7 +2331,7 @@ void A64EmitX64::EmitA64GetD(A64EmitContext& ctx, IR::Inst* inst) {
 
 void A64EmitX64::EmitA64GetQ(A64EmitContext& ctx, IR::Inst* inst) {
     const A64::Vec vec = inst->GetArg(0).GetA64VecRef();
-    const auto addr = xword[r15 + offsetof(A64JitState, vec) + sizeof(u64) * 2 * static_cast<size_t>(vec)];
+    const auto addr = xword[r15 + JSO(vec) + sizeof(u64) * 2 * static_cast<size_t>(vec)];
 
     const Xbyak::Xmm result = ctx.reg_alloc.ScratchXmm();
     code.movaps(result, addr);
@@ -2345,13 +2345,13 @@ void A64EmitX64::EmitA64GetSP(A64EmitContext& ctx, IR::Inst* inst) {
         ctx.reg_alloc.DefineValue(inst, result);
         return;
     }
-    code.mov(result, qword[r15 + offsetof(A64JitState, sp)]);
+    code.mov(result, qword[r15 + JSO(sp)]);
     ctx.reg_alloc.DefineValue(inst, result);
 }
 
 void A64EmitX64::EmitA64GetFPCR(A64EmitContext& ctx, IR::Inst* inst) {
     const Xbyak::Reg32 result = ctx.reg_alloc.ScratchGpr().cvt32();
-    code.mov(result, dword[r15 + offsetof(A64JitState, fpcr)]);
+    code.mov(result, dword[r15 + JSO(fpcr)]);
     ctx.reg_alloc.DefineValue(inst, result);
 }
 
@@ -2362,8 +2362,8 @@ static u32 GetFPSRImpl(A64JitState* jit_state) {
 void A64EmitX64::EmitA64GetFPSR(A64EmitContext& ctx, IR::Inst* inst) {
     ctx.has_host_call = true;
     ctx.reg_alloc.HostCall(inst);
-    code.mov(code.ABI_PARAM1, code.r15);
-    code.stmxcsr(code.dword[code.r15 + offsetof(A64JitState, guest_MXCSR)]);
+    code.lea(code.ABI_PARAM1, code.ptr[code.r15 - A64JitState::kR15Bias]);  // x86Code Perf 20: the JitState
+    code.stmxcsr(code.dword[code.r15 + JSO(guest_MXCSR)]);
     code.CallFunction(GetFPSRImpl);
 }
 
@@ -2378,7 +2378,7 @@ void A64EmitX64::EmitA64SetW(A64EmitContext& ctx, IR::Inst* inst) {
         }
         return;
     }
-    const auto addr = qword[r15 + offsetof(A64JitState, reg) + sizeof(u64) * static_cast<size_t>(reg)];
+    const auto addr = qword[r15 + JSO(reg) + sizeof(u64) * static_cast<size_t>(reg)];
     if (args[1].FitsInImmediateS32()) {
         code.mov(addr, args[1].GetImmediateS32());
     } else {
@@ -2402,7 +2402,7 @@ void A64EmitX64::EmitA64SetX(A64EmitContext& ctx, IR::Inst* inst) {
         }
         return;
     }
-    const auto addr = qword[r15 + offsetof(A64JitState, reg) + sizeof(u64) * static_cast<size_t>(reg)];
+    const auto addr = qword[r15 + JSO(reg) + sizeof(u64) * static_cast<size_t>(reg)];
     if (args[1].FitsInImmediateS32()) {
         code.mov(addr, args[1].GetImmediateS32());
     } else if (args[1].IsInXmm()) {
@@ -2417,7 +2417,7 @@ void A64EmitX64::EmitA64SetX(A64EmitContext& ctx, IR::Inst* inst) {
 void A64EmitX64::EmitA64SetS(A64EmitContext& ctx, IR::Inst* inst) {
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
     const A64::Vec vec = inst->GetArg(0).GetA64VecRef();
-    const auto addr = xword[r15 + offsetof(A64JitState, vec) + sizeof(u64) * 2 * static_cast<size_t>(vec)];
+    const auto addr = xword[r15 + JSO(vec) + sizeof(u64) * 2 * static_cast<size_t>(vec)];
 
     const Xbyak::Xmm to_store = ctx.reg_alloc.UseXmm(args[1]);
     const Xbyak::Xmm tmp = ctx.reg_alloc.ScratchXmm();
@@ -2430,7 +2430,7 @@ void A64EmitX64::EmitA64SetS(A64EmitContext& ctx, IR::Inst* inst) {
 void A64EmitX64::EmitA64SetD(A64EmitContext& ctx, IR::Inst* inst) {
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
     const A64::Vec vec = inst->GetArg(0).GetA64VecRef();
-    const auto addr = xword[r15 + offsetof(A64JitState, vec) + sizeof(u64) * 2 * static_cast<size_t>(vec)];
+    const auto addr = xword[r15 + JSO(vec) + sizeof(u64) * 2 * static_cast<size_t>(vec)];
 
     const Xbyak::Xmm to_store = ctx.reg_alloc.UseScratchXmm(args[1]);
     code.movq(to_store, to_store);  // TODO: Remove when able
@@ -2440,7 +2440,7 @@ void A64EmitX64::EmitA64SetD(A64EmitContext& ctx, IR::Inst* inst) {
 void A64EmitX64::EmitA64SetQ(A64EmitContext& ctx, IR::Inst* inst) {
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
     const A64::Vec vec = inst->GetArg(0).GetA64VecRef();
-    const auto addr = xword[r15 + offsetof(A64JitState, vec) + sizeof(u64) * 2 * static_cast<size_t>(vec)];
+    const auto addr = xword[r15 + JSO(vec) + sizeof(u64) * 2 * static_cast<size_t>(vec)];
 
     const Xbyak::Xmm to_store = ctx.reg_alloc.UseXmm(args[1]);
     code.movaps(addr, to_store);
@@ -2458,7 +2458,7 @@ void A64EmitX64::EmitA64SetSP(A64EmitContext& ctx, IR::Inst* inst) {
         }
         return;
     }
-    const auto addr = qword[r15 + offsetof(A64JitState, sp)];
+    const auto addr = qword[r15 + JSO(sp)];
     if (args[0].FitsInImmediateS32()) {
         code.mov(addr, args[0].GetImmediateS32());
     } else if (args[0].IsInXmm()) {
@@ -2478,9 +2478,9 @@ void A64EmitX64::EmitA64SetFPCR(A64EmitContext& ctx, IR::Inst* inst) {
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
     ctx.has_host_call = true;
     ctx.reg_alloc.HostCall(nullptr, {}, args[0]);
-    code.mov(code.ABI_PARAM1, code.r15);
+    code.lea(code.ABI_PARAM1, code.ptr[code.r15 - A64JitState::kR15Bias]);  // x86Code Perf 20: the JitState
     code.CallFunction(SetFPCRImpl);
-    code.ldmxcsr(code.dword[code.r15 + offsetof(A64JitState, guest_MXCSR)]);
+    code.ldmxcsr(code.dword[code.r15 + JSO(guest_MXCSR)]);
 }
 
 static void SetFPSRImpl(A64JitState* jit_state, u32 value) {
@@ -2491,14 +2491,14 @@ void A64EmitX64::EmitA64SetFPSR(A64EmitContext& ctx, IR::Inst* inst) {
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
     ctx.has_host_call = true;
     ctx.reg_alloc.HostCall(nullptr, {}, args[0]);
-    code.mov(code.ABI_PARAM1, code.r15);
+    code.lea(code.ABI_PARAM1, code.ptr[code.r15 - A64JitState::kR15Bias]);  // x86Code Perf 20: the JitState
     code.CallFunction(SetFPSRImpl);
-    code.ldmxcsr(code.dword[code.r15 + offsetof(A64JitState, guest_MXCSR)]);
+    code.ldmxcsr(code.dword[code.r15 + JSO(guest_MXCSR)]);
 }
 
 void A64EmitX64::EmitA64SetPC(A64EmitContext& ctx, IR::Inst* inst) {
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
-    const auto addr = qword[r15 + offsetof(A64JitState, pc)];
+    const auto addr = qword[r15 + JSO(pc)];
     if (args[0].FitsInImmediateS32()) {
         code.mov(addr, args[0].GetImmediateS32());
     } else if (args[0].IsInXmm()) {
@@ -2531,7 +2531,7 @@ void A64EmitX64::EmitA64CallSupervisor(A64EmitContext& ctx, IR::Inst* inst) {
             code.mov(rax, qword[code.ABI_PARAM1]);
             code.call(qword[rax + static_cast<u32>(mfp.ptr - 1)]);
             EmitPinnedLoad();
-            code.mov(code.byte[r15 + offsetof(A64JitState, exclusive_state)], u8(0));
+            code.mov(code.byte[r15 + JSO(exclusive_state)], u8(0));
             ctx.has_host_call = had_host_call;
             return;
         }
@@ -2542,7 +2542,7 @@ void A64EmitX64::EmitA64CallSupervisor(A64EmitContext& ctx, IR::Inst* inst) {
     });
     EmitPinnedLoad();
     // The kernel would have to execute ERET to get here, which would clear exclusive state.
-    code.mov(code.byte[r15 + offsetof(A64JitState, exclusive_state)], u8(0));
+    code.mov(code.byte[r15 + JSO(exclusive_state)], u8(0));
     // x86Sim: no PC=X30 rewrite here. The old one fired after every svc, including svcs not followed by a ret
     // (it skipped their code); that broke boot. Optional skip-ret lives in GuestThread::CallSVC.
 }
@@ -2631,7 +2631,7 @@ void A64EmitX64::EmitA64GetDCZID(A64EmitContext& ctx, IR::Inst* inst) {
 void A64EmitX64::EmitA64GetTPIDR(A64EmitContext& ctx, IR::Inst* inst) {
     const Xbyak::Reg64 result = ctx.reg_alloc.ScratchGpr();
     if (conf.shared_translations) {
-        code.mov(result, qword[r15 + offsetof(A64JitState, tpidr_el0_ptr)]);
+        code.mov(result, qword[r15 + JSO(tpidr_el0_ptr)]);
         code.mov(result, qword[result]);
     } else if (conf.tpidr_el0) {
         code.mov(result, u64(conf.tpidr_el0));
@@ -2645,7 +2645,7 @@ void A64EmitX64::EmitA64GetTPIDR(A64EmitContext& ctx, IR::Inst* inst) {
 void A64EmitX64::EmitA64GetTPIDRRO(A64EmitContext& ctx, IR::Inst* inst) {
     const Xbyak::Reg64 result = ctx.reg_alloc.ScratchGpr();
     if (conf.shared_translations) {
-        code.mov(result, qword[r15 + offsetof(A64JitState, tpidrro_el0_ptr)]);
+        code.mov(result, qword[r15 + JSO(tpidrro_el0_ptr)]);
         code.mov(result, qword[result]);
     } else if (conf.tpidrro_el0) {
         code.mov(result, u64(conf.tpidrro_el0));
@@ -2661,7 +2661,7 @@ void A64EmitX64::EmitA64SetTPIDR(A64EmitContext& ctx, IR::Inst* inst) {
     const Xbyak::Reg64 value = ctx.reg_alloc.UseGpr(args[0]);
     const Xbyak::Reg64 addr = ctx.reg_alloc.ScratchGpr();
     if (conf.shared_translations) {
-        code.mov(addr, qword[r15 + offsetof(A64JitState, tpidr_el0_ptr)]);
+        code.mov(addr, qword[r15 + JSO(tpidr_el0_ptr)]);
         code.mov(qword[addr], value);
     } else if (conf.tpidr_el0) {
         code.mov(addr, u64(conf.tpidr_el0));
@@ -2681,7 +2681,7 @@ void A64EmitX64::EmitTerminalImpl(IR::Term::Interpret terminal, IR::LocationDesc
     EmitPinnedStore();
     Devirtualize<&A64::UserCallbacks::InterpreterFallback>(conf.callbacks).EmitCall(code, [&](RegList param) {
         code.mov(param[0], A64::LocationDescriptor{terminal.next}.PC());
-        code.mov(qword[r15 + offsetof(A64JitState, pc)], param[0]);
+        code.mov(qword[r15 + JSO(pc)], param[0]);
         code.mov(param[1].cvt32(), terminal.num_instructions);
     });
     EmitPinnedLoad();  // the interpreter wrote the JitState
@@ -2704,7 +2704,7 @@ void A64EmitX64::EmitTerminalImpl(IR::Term::LinkBlock terminal, IR::LocationDesc
     }
     if (!conf.HasOptimization(OptimizationFlag::BlockLinking) || is_single_step) {
         code.mov(rax, A64::LocationDescriptor{terminal.next}.PC());
-        code.mov(qword[r15 + offsetof(A64JitState, pc)], rax);
+        code.mov(qword[r15 + JSO(pc)], rax);
         code.ReturnFromRunCode();
         return;
     }
@@ -2722,7 +2722,7 @@ void A64EmitX64::EmitTerminalImpl(IR::Term::LinkBlock terminal, IR::LocationDesc
             EmitPatchJg(terminal.next);
         }
     } else {
-        code.cmp(dword[r15 + offsetof(A64JitState, halt_reason)], 0);
+        code.cmp(dword[r15 + JSO(halt_reason)], 0);
 
         if (conf.shared_translations) {
             code.align(8);
@@ -2736,14 +2736,14 @@ void A64EmitX64::EmitTerminalImpl(IR::Term::LinkBlock terminal, IR::LocationDesc
     }
 
     code.mov(rax, A64::LocationDescriptor{terminal.next}.PC());
-    code.mov(qword[r15 + offsetof(A64JitState, pc)], rax);
+    code.mov(qword[r15 + JSO(pc)], rax);
     code.ForceReturnFromRunCode();
 }
 
 void A64EmitX64::EmitTerminalImpl(IR::Term::LinkBlockFast terminal, IR::LocationDescriptor, bool is_single_step) {
     if (!conf.HasOptimization(OptimizationFlag::BlockLinking) || is_single_step) {
         code.mov(rax, A64::LocationDescriptor{terminal.next}.PC());
-        code.mov(qword[r15 + offsetof(A64JitState, pc)], rax);
+        code.mov(qword[r15 + JSO(pc)], rax);
         code.ReturnFromRunCode();
         return;
     }
@@ -2770,24 +2770,24 @@ void A64EmitX64::EmitTerminalImpl(IR::Term::PopRSBHint, IR::LocationDescriptor, 
     // of the time, a third of all mispredicts in a cold Settings launch). Same steps as GenTerminalHandlers'
     // handler; a stale generation or a mismatch goes to the shared handlers, which do the rest as before.
     if (conf.shared_translations && conf.HasOptimization(OptimizationFlag::FastDispatch)) {
-        code.mov(rdx, qword[r15 + offsetof(A64JitState, pc)]);  // Perf 14: not rbp (pinned)
+        code.mov(rdx, qword[r15 + JSO(pc)]);  // Perf 14: not rbp (pinned)
         code.mov(rcx, A64::LocationDescriptor::pc_mask);
         code.and_(rcx, rdx);
-        code.mov(ebx, dword[r15 + offsetof(A64JitState, fpcr)]);
+        code.mov(ebx, dword[r15 + JSO(fpcr)]);
         code.and_(ebx, A64::LocationDescriptor::fpcr_mask);
         code.shl(rbx, A64::LocationDescriptor::fpcr_shift);
         code.or_(rbx, rcx);
-        code.mov(rcx, qword[r15 + offsetof(A64JitState, invalidate_gen_ptr)]);
+        code.mov(rcx, qword[r15 + JSO(invalidate_gen_ptr)]);
         code.mov(rcx, qword[rcx]);
-        code.cmp(rcx, qword[r15 + offsetof(A64JitState, rsb_gen)]);
+        code.cmp(rcx, qword[r15 + JSO(rsb_gen)]);
         code.jne(terminal_handler_pop_rsb_hint);  // resets the RSB, then dispatches
-        code.mov(eax, dword[r15 + offsetof(A64JitState, rsb_ptr)]);
+        code.mov(eax, dword[r15 + JSO(rsb_ptr)]);
         code.sub(eax, 1);
         code.and_(eax, u32(A64JitState::RSBPtrMask));
-        code.mov(dword[r15 + offsetof(A64JitState, rsb_ptr)], eax);
-        code.cmp(rbx, qword[r15 + offsetof(A64JitState, rsb_location_descriptors) + rax * sizeof(u64)]);
+        code.mov(dword[r15 + JSO(rsb_ptr)], eax);
+        code.cmp(rbx, qword[r15 + JSO(rsb_location_descriptors) + rax * sizeof(u64)]);
         code.jne(terminal_handler_fast_dispatch_hint);
-        code.mov(rax, qword[r15 + offsetof(A64JitState, rsb_codeptrs) + rax * sizeof(u64)]);
+        code.mov(rax, qword[r15 + JSO(rsb_codeptrs) + rax * sizeof(u64)]);
         code.jmp(rax);
         return;
     }
@@ -2829,7 +2829,7 @@ void A64EmitX64::EmitTerminalImpl(IR::Term::CheckBit terminal, IR::LocationDescr
 }
 
 void A64EmitX64::EmitTerminalImpl(IR::Term::CheckHalt terminal, IR::LocationDescriptor initial_location, bool is_single_step) {
-    code.cmp(dword[r15 + offsetof(A64JitState, halt_reason)], 0);
+    code.cmp(dword[r15 + JSO(halt_reason)], 0);
     code.jne(code.GetForceReturnFromRunCodeAddress());
     EmitTerminal(terminal.else_, initial_location, is_single_step);
 }
@@ -2879,7 +2879,7 @@ void A64EmitX64::EmitSharedPatchSite(int kind, const IR::LocationDescriptor& tar
     code.db(0x48);
     code.db(0xB8);
     code.dq(A64::LocationDescriptor{target_desc}.PC());
-    code.mov(qword[r15 + offsetof(A64JitState, pc)], rax);
+    code.mov(qword[r15 + JSO(pc)], rax);
     if (kind == 0) {
         code.jg(code.GetReturnFromRunCodeAddress());
     } else if (kind == 1) {
@@ -2905,7 +2905,7 @@ void A64EmitX64::EmitPatchJg(const IR::LocationDescriptor& target_desc, CodePtr 
         code.jg(target_code_ptr);
     } else {
         code.mov(rax, A64::LocationDescriptor{target_desc}.PC());
-        code.mov(qword[r15 + offsetof(A64JitState, pc)], rax);
+        code.mov(qword[r15 + JSO(pc)], rax);
         code.jg(code.GetReturnFromRunCodeAddress());
     }
     code.EnsurePatchLocationSize(patch_location, 23);
@@ -2920,7 +2920,7 @@ void A64EmitX64::EmitPatchJz(const IR::LocationDescriptor& target_desc, CodePtr 
         code.jz(target_code_ptr);
     } else {
         code.mov(rax, A64::LocationDescriptor{target_desc}.PC());
-        code.mov(qword[r15 + offsetof(A64JitState, pc)], rax);
+        code.mov(qword[r15 + JSO(pc)], rax);
         code.jz(code.GetReturnFromRunCodeAddress());
     }
     code.EnsurePatchLocationSize(patch_location, 23);
@@ -2935,7 +2935,7 @@ void A64EmitX64::EmitPatchJmp(const IR::LocationDescriptor& target_desc, CodePtr
         code.jmp(target_code_ptr);
     } else {
         code.mov(rax, A64::LocationDescriptor{target_desc}.PC());
-        code.mov(qword[r15 + offsetof(A64JitState, pc)], rax);
+        code.mov(qword[r15 + JSO(pc)], rax);
         code.jmp(code.GetReturnFromRunCodeAddress());
     }
     code.EnsurePatchLocationSize(patch_location, 22);
