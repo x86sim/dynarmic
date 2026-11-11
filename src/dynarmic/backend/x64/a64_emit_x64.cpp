@@ -284,6 +284,11 @@ A64EmitX64::BlockDescriptor A64EmitX64::Emit(IR::Block& block) {
                           nz->GetArg(0).GetInst() == prev_prev_inst;
         }
         host_flags_hold_nzcv = false;
+        // x86Code Perf 22: SetCheckBit(IsZero(x)) right after the IsZero: its test left ZF = the bit
+        const bool zf_after = inst->GetOpcode() == IR::Opcode::A64SetCheckBit && !inst->GetArg(0).IsImmediate() &&
+                              inst->GetArg(0).GetInst() == prev_inst &&
+                              (prev_inst->GetOpcode() == IR::Opcode::IsZero32 || prev_inst->GetOpcode() == IR::Opcode::IsZero64);
+        host_zf_is_check_bit = false;
 
         // Call the relevant Emit* member function.
         switch (inst->GetOpcode()) {
@@ -308,6 +313,7 @@ A64EmitX64::BlockDescriptor A64EmitX64::Emit(IR::Block& block) {
 
         ctx.reg_alloc.EndOfAllocScope();
         host_flags_hold_nzcv = flags_after;
+        host_zf_is_check_bit = zf_after;
         prev_prev_inst = prev_inst;
         prev_inst = inst;
 
@@ -323,6 +329,7 @@ A64EmitX64::BlockDescriptor A64EmitX64::Emit(IR::Block& block) {
     }
     EmitX64::EmitTerminal(block.GetTerminal(), ctx.Location().SetSingleStepping(false), ctx.IsSingleStep());
     host_flags_hold_nzcv = false;
+    host_zf_is_check_bit = false;
     code.int3();
 
     for (auto& deferred_emit : ctx.deferred_emits) {
@@ -2836,10 +2843,15 @@ void A64EmitX64::EmitTerminalImpl(IR::Term::If terminal, IR::LocationDescriptor 
 }
 
 void A64EmitX64::EmitTerminalImpl(IR::Term::CheckBit terminal, IR::LocationDescriptor initial_location, bool is_single_step) {
-    host_flags_hold_nzcv = false;  // the cmp below
     Xbyak::Label fail;
-    code.cmp(code.byte[rsp + ABI_SHADOW_SPACE + offsetof(StackLayout, check_bit)], u8(0));
-    code.jz(fail);
+    if (host_zf_is_check_bit) {  // x86Code Perf 22: ZF is the bit (0: fail)
+        code.jnz(fail);
+    } else {
+        code.cmp(code.byte[rsp + ABI_SHADOW_SPACE + offsetof(StackLayout, check_bit)], u8(0));
+        code.jz(fail);
+    }
+    host_flags_hold_nzcv = false;
+    host_zf_is_check_bit = false;
     EmitTerminal(terminal.then_, initial_location, is_single_step);
     code.L(fail);
     EmitTerminal(terminal.else_, initial_location, is_single_step);

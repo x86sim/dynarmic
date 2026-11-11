@@ -131,6 +131,8 @@ protected:
     // x86Code Perf 21: the host flags still are the guest NZCV just stored (SetNZCV of the flags captured right after
     // the last arithmetic, nothing emitted since): EmitCond branches on them directly
     bool host_flags_hold_nzcv = false;
+    // x86Code Perf 22: ZF is the check bit just set (SetCheckBit of an IsZero emitted right before, nothing since)
+    bool host_zf_is_check_bit = false;
 
     void EmitVerboseDebuggingOutput(RegAlloc& reg_alloc);
 
