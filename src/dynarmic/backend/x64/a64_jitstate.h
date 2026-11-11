@@ -24,7 +24,7 @@ class BlockOfCode;
 struct A64JitState {
     using ProgramCounterType = u64;
 
-    // x86Code Perf 20: r15 points kR15Bias bytes into the state, so reg[0..30] and sp ([-128, +120]) are disp8 operands
+    // x86Sim Perf 20: r15 points kR15Bias bytes into the state, so reg[0..30] and sp ([-128, +120]) are disp8 operands
     // (x16-x30 and sp took a 4-byte displacement each); every r15-relative offset is JSO(field).
     static constexpr std::ptrdiff_t kR15Bias = 128;
 
@@ -109,7 +109,7 @@ struct A64JitState {
 
 using CodePtr = const void*;
 
-// x86Code Perf 20: an A64JitState field's offset from r15
+// x86Sim Perf 20: an A64JitState field's offset from r15
 #define JSO(field) (static_cast<std::ptrdiff_t>(offsetof(::Dynarmic::Backend::X64::A64JitState, field)) - ::Dynarmic::Backend::X64::A64JitState::kR15Bias)
 
 }  // namespace Dynarmic::Backend::X64

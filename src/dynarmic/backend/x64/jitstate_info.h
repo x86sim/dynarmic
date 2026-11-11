@@ -11,7 +11,7 @@ namespace Dynarmic::Backend::X64 {
 
 struct JitStateInfo {
     template<typename JitStateType>
-    JitStateInfo(const JitStateType&, size_t bias = 0)  // x86Code Perf 20: offsets from r15 = state + bias
+    JitStateInfo(const JitStateType&, size_t bias = 0)  // x86Sim Perf 20: offsets from r15 = state + bias
             : r15_bias(bias)
             , offsetof_guest_MXCSR(offsetof(JitStateType, guest_MXCSR) - bias)
             , offsetof_asimd_MXCSR(offsetof(JitStateType, asimd_MXCSR) - bias)

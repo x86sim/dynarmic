@@ -521,7 +521,7 @@ Xbyak::Label EmitX64::EmitCond(IR::Cond cond) {
     Xbyak::Label pass;
 
     if (host_flags_hold_nzcv) {
-        // x86Code Perf 21: CF is the guest's C here (subtractions inverted it before capturing), ZF/SF/OF are Z/N/V
+        // x86Sim Perf 21: CF is the guest's C here (subtractions inverted it before capturing), ZF/SF/OF are Z/N/V
         switch (cond) {
         case IR::Cond::EQ: code.jz(pass); return pass;
         case IR::Cond::NE: code.jnz(pass); return pass;

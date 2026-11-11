@@ -276,7 +276,7 @@ A64EmitX64::BlockDescriptor A64EmitX64::Emit(IR::Block& block) {
     for (auto iter = block.begin(); iter != block.end(); ++iter) {
         IR::Inst* inst = &*iter;
 
-        // x86Code Perf 21: SetNZCV of GetNZCVFromOp(op) right after op and its pseudo-op leaves the host flags = NZCV
+        // x86Sim Perf 21: SetNZCV of GetNZCVFromOp(op) right after op and its pseudo-op leaves the host flags = NZCV
         bool flags_after = false;
         if (inst->GetOpcode() == IR::Opcode::A64SetNZCV && !inst->GetArg(0).IsImmediate()) {
             IR::Inst* nz = inst->GetArg(0).GetInst();
@@ -284,7 +284,7 @@ A64EmitX64::BlockDescriptor A64EmitX64::Emit(IR::Block& block) {
                           nz->GetArg(0).GetInst() == prev_prev_inst;
         }
         host_flags_hold_nzcv = false;
-        // x86Code Perf 22: SetCheckBit(IsZero(x)) right after the IsZero: its test left ZF = the bit
+        // x86Sim Perf 22: SetCheckBit(IsZero(x)) right after the IsZero: its test left ZF = the bit
         const bool zf_after = inst->GetOpcode() == IR::Opcode::A64SetCheckBit && !inst->GetArg(0).IsImmediate() &&
                               inst->GetArg(0).GetInst() == prev_inst &&
                               (prev_inst->GetOpcode() == IR::Opcode::IsZero32 || prev_inst->GetOpcode() == IR::Opcode::IsZero64);
@@ -319,6 +319,8 @@ A64EmitX64::BlockDescriptor A64EmitX64::Emit(IR::Block& block) {
 
         if (conf.very_verbose_debugging_output) {
             EmitVerboseDebuggingOutput(reg_alloc);
+            host_flags_hold_nzcv = false;  // the dump's code changed the host flags
+            host_zf_is_check_bit = false;
         }
     }
 
@@ -326,6 +328,8 @@ A64EmitX64::BlockDescriptor A64EmitX64::Emit(IR::Block& block) {
 
     if (conf.enable_cycle_counting) {
         EmitAddCycles(block.CycleCount());
+        host_flags_hold_nzcv = false;  // its sub changed the host flags
+        host_zf_is_check_bit = false;
     }
     EmitX64::EmitTerminal(block.GetTerminal(), ctx.Location().SetSingleStepping(false), ctx.IsSingleStep());
     host_flags_hold_nzcv = false;
@@ -2385,7 +2389,7 @@ static u32 GetFPSRImpl(A64JitState* jit_state) {
 void A64EmitX64::EmitA64GetFPSR(A64EmitContext& ctx, IR::Inst* inst) {
     ctx.has_host_call = true;
     ctx.reg_alloc.HostCall(inst);
-    code.lea(code.ABI_PARAM1, code.ptr[code.r15 - A64JitState::kR15Bias]);  // x86Code Perf 20: the JitState
+    code.lea(code.ABI_PARAM1, code.ptr[code.r15 - A64JitState::kR15Bias]);  // x86Sim Perf 20: the JitState
     code.stmxcsr(code.dword[code.r15 + JSO(guest_MXCSR)]);
     code.CallFunction(GetFPSRImpl);
 }
@@ -2501,7 +2505,7 @@ void A64EmitX64::EmitA64SetFPCR(A64EmitContext& ctx, IR::Inst* inst) {
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
     ctx.has_host_call = true;
     ctx.reg_alloc.HostCall(nullptr, {}, args[0]);
-    code.lea(code.ABI_PARAM1, code.ptr[code.r15 - A64JitState::kR15Bias]);  // x86Code Perf 20: the JitState
+    code.lea(code.ABI_PARAM1, code.ptr[code.r15 - A64JitState::kR15Bias]);  // x86Sim Perf 20: the JitState
     code.CallFunction(SetFPCRImpl);
     code.ldmxcsr(code.dword[code.r15 + JSO(guest_MXCSR)]);
 }
@@ -2514,7 +2518,7 @@ void A64EmitX64::EmitA64SetFPSR(A64EmitContext& ctx, IR::Inst* inst) {
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
     ctx.has_host_call = true;
     ctx.reg_alloc.HostCall(nullptr, {}, args[0]);
-    code.lea(code.ABI_PARAM1, code.ptr[code.r15 - A64JitState::kR15Bias]);  // x86Code Perf 20: the JitState
+    code.lea(code.ABI_PARAM1, code.ptr[code.r15 - A64JitState::kR15Bias]);  // x86Sim Perf 20: the JitState
     code.CallFunction(SetFPSRImpl);
     code.ldmxcsr(code.dword[code.r15 + JSO(guest_MXCSR)]);
 }
@@ -2844,7 +2848,7 @@ void A64EmitX64::EmitTerminalImpl(IR::Term::If terminal, IR::LocationDescriptor 
 
 void A64EmitX64::EmitTerminalImpl(IR::Term::CheckBit terminal, IR::LocationDescriptor initial_location, bool is_single_step) {
     Xbyak::Label fail;
-    if (host_zf_is_check_bit) {  // x86Code Perf 22: ZF is the bit (0: fail)
+    if (host_zf_is_check_bit) {  // x86Sim Perf 22: ZF is the bit (0: fail)
         code.jnz(fail);
     } else {
         code.cmp(code.byte[rsp + ABI_SHADOW_SPACE + offsetof(StackLayout, check_bit)], u8(0));

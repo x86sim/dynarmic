@@ -111,7 +111,9 @@ SigHandler::SigHandler() {
         supports_fast_mem = false;
         return;
     }
-#ifdef __APPLE__
+    // x86Sim: on x86-64 also SIGBUS: an unchecked fastmem access (fastmem_unchecked) with a non-canonical address and
+    // base rbp or rsp raises #SS, not #GP, which Linux delivers as SIGBUS (SI_KERNEL)
+#if defined(__APPLE__) || defined(MCL_ARCHITECTURE_X86_64)
     if (sigaction(SIGBUS, &sa, &old_sa_bus) != 0) {
         fmt::print(stderr, "dynarmic: POSIX SigHandler: could not set SIGBUS handler\n");
         supports_fast_mem = false;
