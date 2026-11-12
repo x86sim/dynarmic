@@ -42,7 +42,7 @@ static void LiveBin(u64 pc, size_t insns, size_t bytes) {
     static const char* path = getenv("X86SIM_A64_LIVE_BINS");
     if (!path) return;
     static std::atomic<u64> n[3][3];
-    const int b = pc >= 0x1c0000000ull && pc < 0x2ac000000ull ? 0 : pc >= 0x2ac000000ull && pc < 0x2c0000000ull ? 1 : 2;
+    const int b = pc >= 0x180000000ull && pc < 0x2ac000000ull ? 0 : pc >= 0x2ac000000ull && pc < 0x300000000ull ? 1 : 2;  // tvOS / watchOS caches start at 0x180000000
     n[b][0]++; n[b][1] += insns; n[b][2] += bytes;
     if ((n[0][0] + n[1][0] + n[2][0]) % 256) return;
     char f[512];
