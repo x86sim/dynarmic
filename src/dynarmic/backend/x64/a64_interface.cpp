@@ -161,6 +161,14 @@ void Jit::SetFastDispatchEntries(std::size_t n) {
     Backend::X64::SetFastDispatchEntries(n);
 }
 
+void Jit::LockShared(SharedCode& shared) {
+    shared.mutex().lock();
+}
+
+void Jit::UnlockShared(SharedCode& shared) {
+    shared.mutex().unlock();
+}
+
 std::string Jit::GetMemoryReport(SharedCode& shared) {
     std::unique_lock lock{shared.mutex()};
     return shared.emitter.MemoryReport();

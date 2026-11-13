@@ -42,6 +42,10 @@ public:
     /// x86Sim RAM 4: runs fn(arg) with the shared emitter lock held (every write to translated code, including the
     /// AOT image's link sites, happens under it): libarm64jit drops page-table entries of clean image pages.
     static void WithSharedLock(SharedCode& shared, void (*fn)(void*), void* arg);
+    /// x86Sim: the translation lock held across a fork() (libarm64jit's malloc fork hooks): a child forked while
+    /// another thread translated would wait for it forever.
+    static void LockShared(SharedCode& shared);
+    static void UnlockShared(SharedCode& shared);
     /// x86Sim Speed 31: descriptors of the blocks this process translated itself (not the image's), persistable ones
     /// with a guest PC in [lo, hi) (training feedback from processes that run on the AOT image).
     static std::vector<std::uint64_t> GetDynamicDescriptors(SharedCode& shared, std::uint64_t lo, std::uint64_t hi);
