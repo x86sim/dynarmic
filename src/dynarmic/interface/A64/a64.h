@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -192,6 +193,17 @@ public:
     std::uint32_t GetPstate() const;
     /// Modify PSTATE
     void SetPstate(std::uint32_t value);
+
+    /// x86Sim: guest signals for faults in translated code (libarm64jit signals.cpp). The guest PC of the block whose
+    /// code contains host address `rip` (nullopt: not in a block, e.g. a prelude helper). Takes the shared lock.
+    std::optional<std::uint64_t> GuestBlockAtHostAddress(std::uint64_t rip);
+    /// Pinned guest registers (UserConfig::pinned_regs) live in host r12/r13/r14/rbp inside translated code:
+    /// host = {r12, r13, r14, rbp} of an interrupted block, into the JIT state / from it.
+    void LoadPinnedFromHost(const std::uint64_t host[4]);
+    void StorePinnedToHost(std::uint64_t host[4]) const;
+    /// Where interrupted translated code (at a block's own stack depth) jumps to leave Run() at once (the pinned
+    /// registers and MXCSR are written back on the way).
+    const void* ForceReturnAddress() const;
 
     /// Clears exclusive state for this core.
     void ClearExclusiveState();

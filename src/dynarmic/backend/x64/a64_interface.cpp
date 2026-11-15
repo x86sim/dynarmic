@@ -378,6 +378,48 @@ public:
         jit_state.pc = value;
     }
 
+    std::optional<u64> GuestBlockAtHostAddress(u64 rip) {
+        std::unique_lock lock{emitter.shared_mutex, std::defer_lock};
+        if (conf.shared_translations) {
+            lock.lock();
+        }
+        const std::optional<u64> loc = emitter.BlockContaining(rip);
+        if (!loc) {
+            return std::nullopt;
+        }
+        return A64::LocationDescriptor{IR::LocationDescriptor{*loc}}.PC();
+    }
+
+    void LoadPinnedFromHost(const u64 host[4]) {
+        for (size_t i = 0; i < 4; i++) {
+            const int g = conf.pinned_regs[i];
+            if (g == 32) {
+                jit_state.cpsr_nzcv = static_cast<u32>(host[i]);
+            } else if (g == 31) {
+                jit_state.sp = host[i];
+            } else if (g >= 0) {
+                jit_state.reg[g] = host[i];
+            }
+        }
+    }
+
+    void StorePinnedToHost(u64 host[4]) const {
+        for (size_t i = 0; i < 4; i++) {
+            const int g = conf.pinned_regs[i];
+            if (g == 32) {
+                host[i] = (host[i] & ~u64(0xFFFFFFFF)) | jit_state.cpsr_nzcv;
+            } else if (g == 31) {
+                host[i] = jit_state.sp;
+            } else if (g >= 0) {
+                host[i] = jit_state.reg[g];
+            }
+        }
+    }
+
+    const void* ForceReturnAddress() const {
+        return block_of_code.GetForceReturnFromRunCodeAddress();
+    }
+
     Jit::StatePointers GetStatePointers() {
         return {jit_state.reg.data(), &jit_state.sp, &jit_state.pc, jit_state.vec.data()};
     }
@@ -922,6 +964,22 @@ u64 Jit::GetPC() const {
 
 void Jit::SetPC(u64 value) {
     impl->SetPC(value);
+}
+
+std::optional<std::uint64_t> Jit::GuestBlockAtHostAddress(std::uint64_t rip) {
+    return impl->GuestBlockAtHostAddress(rip);
+}
+
+void Jit::LoadPinnedFromHost(const std::uint64_t host[4]) {
+    impl->LoadPinnedFromHost(host);
+}
+
+void Jit::StorePinnedToHost(std::uint64_t host[4]) const {
+    impl->StorePinnedToHost(host);
+}
+
+const void* Jit::ForceReturnAddress() const {
+    return impl->ForceReturnAddress();
 }
 
 Jit::StatePointers Jit::GetStatePointers() {

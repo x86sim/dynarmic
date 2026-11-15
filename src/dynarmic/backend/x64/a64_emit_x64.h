@@ -262,6 +262,8 @@ protected:
     static constexpr u64 kCheckAfterFaults = 8;
     void OnFastmemFault(u64 rip);
 public:
+    /// x86Sim: the location descriptor of the block (dynamic or static image) whose code contains host address rip.
+    std::optional<u64> BlockContaining(u64 rip);
     u64* shared_invalidate_gen = nullptr;  // SharedCode::invalidate_gen (bumped when a block is retranslated checked)
 protected:
     std::vector<FastmemTable::StaticEntry> static_fm_own;  // static fastmem sites when the index file is not mapped

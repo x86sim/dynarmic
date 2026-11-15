@@ -137,17 +137,7 @@ void A64EmitX64::OnFastmemFault(u64 rip) {
     if (++fault_sites[rip] != kCheckAfterFaults || !FastmemUnchecked(conf)) {
         return;
     }
-    std::optional<u64> loc;
-    for (const auto& [l, bd] : block_descriptors) {
-        const u64 e = reinterpret_cast<u64>(bd.entrypoint);
-        if (rip >= e && rip < e + bd.size) {
-            loc = l.Value();
-            break;
-        }
-    }
-    if (!loc && static_image.active && rip >= reinterpret_cast<u64>(static_image.code_begin)) {
-        loc = StaticImageBlockAt(rip - reinterpret_cast<u64>(static_image.code_begin));
-    }
+    const std::optional<u64> loc = BlockContaining(rip);
     if (!loc || !checked_blocks.insert(*loc).second) {
         return;
     }
@@ -160,6 +150,19 @@ void A64EmitX64::OnFastmemFault(u64 rip) {
     if (shared_invalidate_gen) {
         ++*shared_invalidate_gen;
     }
+}
+
+std::optional<u64> A64EmitX64::BlockContaining(u64 rip) {
+    for (const auto& [l, bd] : block_descriptors) {
+        const u64 e = reinterpret_cast<u64>(bd.entrypoint);
+        if (rip >= e && rip < e + bd.size) {
+            return l.Value();
+        }
+    }
+    if (static_image.active && rip >= reinterpret_cast<u64>(static_image.code_begin)) {
+        return StaticImageBlockAt(rip - reinterpret_cast<u64>(static_image.code_begin));
+    }
+    return std::nullopt;
 }
 
 // Perf 1d: see static_groups. Same answer as a scan of every block in order (the first live block containing off,
