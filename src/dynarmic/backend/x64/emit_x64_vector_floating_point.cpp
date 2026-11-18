@@ -4,6 +4,9 @@
  */
 
 #include <array>
+#include <cmath>
+#include <immintrin.h>
+#include <cstring>
 #include <limits>
 #include <tuple>
 #include <type_traits>
@@ -26,6 +29,7 @@
 #include "dynarmic/backend/x64/emit_x64.h"
 #include "dynarmic/backend/x64/emit_x64_frint.h"
 #include "dynarmic/common/fp/fpcr.h"
+#include "dynarmic/common/fp/fpsr.h"
 #include "dynarmic/common/fp/info.h"
 #include "dynarmic/common/fp/op.h"
 #include "dynarmic/common/fp/util.h"
@@ -1309,13 +1313,176 @@ static void EmitFPVectorMulAddFallback(VectorArray<FPT>& result, const VectorArr
     }
 }
 
+
+namespace {
+// x86sim: half-precision fused multiply-add without the soft-float path (FPMulAdd<u16> unpacks, multiplies to
+// 128 bits and rounds per lane: ~95% of an fp16 network's run time, MusicUnderstanding's rhythm model). For
+// round-to-nearest-even, FZ16 off and finite operands: a half product is exact in double (11 x 11 bits) and
+// the double sum rounds to the same half (where the double sum is inexact the addends are > 2^42 apart, far
+// below the half's rounding point), so one correct double -> half rounding gives the fused result. Anything
+// else (NaN / infinity operands, other modes) still goes to FP::FPMulAdd.
+double HalfToDouble(u16 h) {
+    const u64 e = (h >> 10) & 0x1f;
+    const u64 m = h & 0x3ff;
+    double v;
+    if (e == 0) {
+        v = static_cast<double>(m) * 0x1p-24;  // subnormal (or zero): exact
+    } else {
+        const u64 bits = ((e - 15 + 1023) << 52) | (m << 42);
+        std::memcpy(&v, &bits, sizeof v);
+    }
+    return (h & 0x8000) ? -v : v;
+}
+
+// round a finite nonzero double (a half product + half sum: never a double subnormal) to half, nearest-even;
+// inexact / overflow / underflow as Arm reports them (tininess before rounding)
+u16 DoubleToHalfRN(double d, bool& inexact, bool& overflow, bool& underflow) {
+    u64 bits;
+    std::memcpy(&bits, &d, sizeof bits);
+    const u16 sign = static_cast<u16>((bits >> 48) & 0x8000);
+    const int e = static_cast<int>((bits >> 52) & 0x7ff) - 1023;
+    const u64 m = (bits & ((u64{1} << 52) - 1)) | (u64{1} << 52);
+    if (e > 15) {
+        overflow = inexact = true;
+        return sign | 0x7c00;
+    }
+    const int shift = e >= -14 ? 42 : 42 + (-14 - e);
+    u64 q, rem, halfway;
+    if (shift >= 64) {
+        q = 0, rem = m, halfway = ~u64{0};  // below half the smallest subnormal: rounds to zero
+    } else {
+        q = m >> shift, rem = m & ((u64{1} << shift) - 1), halfway = u64{1} << (shift - 1);
+    }
+    if (rem != 0) {
+        inexact = true;
+        if (e < -14) {
+            underflow = true;
+        }
+        if (rem > halfway || (rem == halfway && (q & 1))) {
+            q++;
+        }
+    }
+    // normal: q in [1024, 2048] (2048: rounded up into the next binade); subnormal: q in [0, 1024]
+    const u32 r = e >= -14 ? (static_cast<u32>(e + 15) << 10) + static_cast<u32>(q) - 1024 : static_cast<u32>(q);
+    if (r >= 0x7c00) {
+        overflow = inexact = true;
+        return sign | 0x7c00;
+    }
+    return sign | static_cast<u16>(r);
+}
+
+u16 FastHalfMulAdd(u16 addend, u16 op1, u16 op2, FP::FPCR fpcr, FP::FPSR& fpsr) {
+    const auto special = [](u16 h) { return (h & 0x7c00) == 0x7c00; };
+    if (fpcr.FZ16() || fpcr.RMode() != FP::RoundingMode::ToNearest_TieEven || special(addend) || special(op1) || special(op2)) {
+        return FP::FPMulAdd<u16>(addend, op1, op2, fpcr, fpsr);
+    }
+    const double p = HalfToDouble(op1) * HalfToDouble(op2);
+    const double c = HalfToDouble(addend);
+    const double s = p + c;
+    // TwoSum: is the double sum exact?
+    const double bb = s - p;
+    const double err = (p - (s - bb)) + (c - bb);
+    bool inexact = err != 0, overflow = false, underflow = false;
+    u16 r;
+    if (s == 0) {
+        // exact zero sum: IEEE sign rules (RN: +0 unless both are -0), which the double sum already has
+        r = std::signbit(s) ? 0x8000 : 0;
+        if (err != 0) {  // cannot happen for half inputs; be safe
+            return FP::FPMulAdd<u16>(addend, op1, op2, fpcr, fpsr);
+        }
+    } else {
+        r = DoubleToHalfRN(s, inexact, overflow, underflow);
+    }
+    if (inexact) {
+        fpsr.IXC(true);
+    }
+    if (overflow) {
+        fpsr.OFC(true);
+    }
+    if (underflow) {
+        fpsr.UFC(true);
+    }
+    return r;
+}
+
+// eight lanes at once with F16C + FMA: the float FMA of half operands is the exact sum rounded once (the product
+// is exact in float), and its rounding to half matches the fused result unless the float landed exactly on a
+// half-way point (a double rounding could then go the wrong way): such lanes, and any vector with NaN / infinity
+// operands, results in the half's subnormal range or above its largest value, or another FPCR, take the exact scalar path. Flags come from
+// MXCSR (inexact, overflow)
+__attribute__((target("avx2,fma,f16c"))) bool VectorHalfMulAdd(std::array<u16, 8>& result, const std::array<u16, 8>& addend, const std::array<u16, 8>& op1, const std::array<u16, 8>& op2, FP::FPCR fpcr, FP::FPSR& fpsr) {
+    if (fpcr.FZ16() || fpcr.RMode() != FP::RoundingMode::ToNearest_TieEven) {
+        return false;
+    }
+    const __m128i va = _mm_loadu_si128(reinterpret_cast<const __m128i*>(addend.data()));
+    const __m128i v1 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(op1.data()));
+    const __m128i v2 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(op2.data()));
+    const __m128i expmask = _mm_set1_epi16(0x7c00);
+    const __m128i special = _mm_or_si128(_mm_or_si128(_mm_cmpeq_epi16(_mm_and_si128(va, expmask), expmask), _mm_cmpeq_epi16(_mm_and_si128(v1, expmask), expmask)),
+                                         _mm_cmpeq_epi16(_mm_and_si128(v2, expmask), expmask));
+    if (!_mm_testz_si128(special, special)) {
+        return false;
+    }
+    const unsigned old_csr = _mm_getcsr();
+    __m256 fa = _mm256_cvtph_ps(va), f1 = _mm256_cvtph_ps(v1), f2 = _mm256_cvtph_ps(v2);
+    _mm_setcsr(0x1f80);  // all exceptions masked, flags clear, round to nearest, no FTZ / DAZ
+    // the barriers keep the FMA and the conversion between the MXCSR write and read (the compiler does not order
+    // vector arithmetic against _mm_setcsr / _mm_getcsr)
+    asm volatile("" : "+x"(fa), "+x"(f1), "+x"(f2)::"memory");
+    __m256 f = _mm256_fmadd_ps(f1, f2, fa);
+    __m128i h = _mm256_cvtps_ph(f, _MM_FROUND_TO_NEAREST_INT);
+    asm volatile("" : "+x"(f), "+x"(h)::"memory");
+    const unsigned csr = _mm_getcsr();
+    _mm_setcsr(old_csr);
+    // results at or below the smallest normal half: Arm's underflow flag needs per-lane exactness (F16C reports no
+    // underflow), so the whole vector goes the scalar way
+    const __m256 absf = _mm256_andnot_ps(_mm256_set1_ps(-0.0f), f);
+    const __m256 tiny = _mm256_and_ps(_mm256_cmp_ps(absf, _mm256_set1_ps(0x1p-14f), _CMP_LE_OQ), _mm256_cmp_ps(absf, _mm256_setzero_ps(), _CMP_NEQ_OQ));
+    // above the largest half: F16C flags overflow for |f| in (65504, 65520), which Arm rounds down without one
+    const __m256 huge = _mm256_cmp_ps(absf, _mm256_set1_ps(65504.0f), _CMP_GT_OQ);
+    if (_mm256_movemask_ps(_mm256_or_ps(tiny, huge))) {
+        return false;
+    }
+    // a half-way point: f is not a half value, and 2f - hf (the other neighbour) is one
+    const __m256 hf = _mm256_cvtph_ps(h);
+    const __m256 other = _mm256_sub_ps(_mm256_add_ps(f, f), hf);
+    const __m256 other_rt = _mm256_cvtph_ps(_mm256_cvtps_ph(other, _MM_FROUND_TO_NEAREST_INT));
+    const __m256 tie = _mm256_and_ps(_mm256_cmp_ps(f, hf, _CMP_NEQ_UQ), _mm256_cmp_ps(other, other_rt, _CMP_EQ_OQ));
+    const int tie_lanes = _mm256_movemask_ps(tie);
+    _mm_storeu_si128(reinterpret_cast<__m128i*>(result.data()), h);
+    // (the scalar redo below sets its own flags; MXCSR's for those lanes are the same events)
+    if (csr & 0x20) {
+        fpsr.IXC(true);
+    }
+    if (csr & 0x08) {
+        fpsr.OFC(true);
+    }
+    for (int i = 0; i < 8; i++) {
+        if (tie_lanes & (1 << i)) {
+            result[i] = FastHalfMulAdd(addend[i], op1[i], op2[i], fpcr, fpsr);
+        }
+    }
+    return true;
+}
+const bool g_vector_half_fma = __builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma") && __builtin_cpu_supports("f16c");
+}  // namespace
+
 template<size_t fsize>
 void EmitFPVectorMulAdd(BlockOfCode& code, EmitContext& ctx, IR::Inst* inst) {
     using FPT = mcl::unsigned_integer_of_size<fsize>;
 
     const auto fallback_fn = [](VectorArray<FPT>& result, const VectorArray<FPT>& addend, const VectorArray<FPT>& op1, const VectorArray<FPT>& op2, FP::FPCR fpcr, FP::FPSR& fpsr) {
+        if constexpr (fsize == 16) {
+            if (g_vector_half_fma && VectorHalfMulAdd(result, addend, op1, op2, fpcr, fpsr)) {
+                return;
+            }
+        }
         for (size_t i = 0; i < result.size(); i++) {
-            result[i] = FP::FPMulAdd<FPT>(addend[i], op1[i], op2[i], fpcr, fpsr);
+            if constexpr (fsize == 16) {
+                result[i] = FastHalfMulAdd(addend[i], op1[i], op2[i], fpcr, fpsr);
+            } else {
+                result[i] = FP::FPMulAdd<FPT>(addend[i], op1[i], op2[i], fpcr, fpsr);
+            }
         }
     };
 
