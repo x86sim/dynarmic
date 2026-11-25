@@ -26,6 +26,14 @@ void IREmitter::SetCheckBit(const IR::U1& value) {
     Inst(Opcode::A64SetCheckBit, value);
 }
 
+void IREmitter::SideExitIf(IR::Cond cond, const LocationDescriptor& target) {
+    Inst(Opcode::A64SideExitIf, IR::Value{cond}, Imm64(IR::LocationDescriptor{target}.Value()));
+}
+
+void IREmitter::SideExitIfBit(const IR::U1& bit, bool when, const LocationDescriptor& target) {
+    Inst(Opcode::A64SideExitIfBit, bit, Imm1(when), Imm64(IR::LocationDescriptor{target}.Value()));
+}
+
 IR::U1 IREmitter::GetCFlag() {
     return Inst<IR::U1>(Opcode::A64GetCFlag);
 }

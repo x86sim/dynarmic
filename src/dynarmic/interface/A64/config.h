@@ -307,6 +307,13 @@ struct UserConfig {
     /// ReturnFromRunCode with RSB off), so the ret block runs without leaving Run(). Frontend only.
     bool fuse_svc_ret = false;
 
+    /// x86Sim: conditional branches become side exits, up to this many per block (A64::TranslationOptions::max_side_exits)
+    std::size_t max_side_exits = 0;
+
+    /// x86Sim: tiered translation: a block runs in the interpreter (backend/x64/a64_interp.h) its first this many
+    /// times and is translated after that (0: always translated)
+    std::size_t interpret_threshold = 0;
+
     /// x86Sim: import stubs link directly to their GOT slot's current target, guarded (A64StubLinkPass).
     bool link_import_stubs = false;
 

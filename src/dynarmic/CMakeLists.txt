@@ -333,6 +333,8 @@ if ("x86_64" IN_LIST ARCHITECTURE)
     if ("A64" IN_LIST DYNARMIC_FRONTENDS)
         target_architecture_specific_sources(dynarmic "x86_64"
             backend/x64/a64_emit_x64.cpp
+            backend/x64/a64_interp.cpp
+            backend/x64/a64_interp.h
             backend/x64/a64_emit_x64.h
             backend/x64/a64_emit_x64_memory.cpp
             backend/x64/a64_interface.cpp

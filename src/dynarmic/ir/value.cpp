@@ -85,28 +85,21 @@ Value Value::EmptyNZCVImmediateMarker() {
     return result;
 }
 
-bool Value::IsIdentity() const {
-    if (type == Type::Opaque)
-        return inner.inst->GetOpcode() == Opcode::Identity;
+// (type == Type::Opaque for all three: value.h)
+bool Value::IsIdentitySlow() const {
+    return inner.inst->GetOpcode() == Opcode::Identity;
+}
+
+bool Value::IsImmediateSlow() const {
+    if (inner.inst->GetOpcode() == Opcode::Identity)
+        return inner.inst->GetArg(0).IsImmediate();
     return false;
 }
 
-bool Value::IsImmediate() const {
-    if (IsIdentity())
-        return inner.inst->GetArg(0).IsImmediate();
-    return type != Type::Opaque;
-}
-
-bool Value::IsEmpty() const {
-    return type == Type::Void;
-}
-
-Type Value::GetType() const {
-    if (IsIdentity())
+Type Value::GetTypeSlow() const {
+    if (inner.inst->GetOpcode() == Opcode::Identity)
         return inner.inst->GetArg(0).GetType();
-    if (type == Type::Opaque)
-        return inner.inst->GetType();
-    return type;
+    return inner.inst->GetType();
 }
 
 A32::Reg Value::GetA32RegRef() const {

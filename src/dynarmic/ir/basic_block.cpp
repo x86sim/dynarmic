@@ -21,8 +21,12 @@
 
 namespace Dynarmic::IR {
 
+// x86Sim: the instruction pool starts at 256 instructions (~26 KB) and doubles up to 4096. Its one 4096-instruction
+// slab (426 KB) per block was above malloc's mmap threshold: every translated block was an mmap, page faults on its
+// first pages and an munmap (a TLB shootdown across the process's threads). A boot without the translation cache:
+// 1.15 M page faults in SpringBoard's first 40 s, ~3.5 s of its CPU in the kernel. Blocks use a few dozen.
 Block::Block(const LocationDescriptor& location)
-        : location{location}, end_location{location}, cond{Cond::AL}, instruction_alloc_pool{std::make_unique<Common::Pool>(sizeof(Inst), 4096)} {}
+        : location{location}, end_location{location}, cond{Cond::AL}, instruction_alloc_pool{std::make_unique<Common::Pool>(sizeof(Inst), 256, 4096)} {}
 
 Block::~Block() = default;
 

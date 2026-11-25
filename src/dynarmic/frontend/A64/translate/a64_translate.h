@@ -44,6 +44,13 @@ struct TranslationOptions {
     /// then sets PC=X30 when the handler did not redirect (skip the ret block). When false,
     /// classic PushRSB → CallSVC → PopRSB → ret-block path.
     bool fuse_svc_ret = false;
+
+    /// x86Sim: a conditional branch (B.cond, CBZ/CBNZ, TBZ/TBNZ) becomes a side exit to its target and the block goes
+    /// on with the next instruction, up to this many per block (0: every conditional branch ends the block). Fewer,
+    /// larger blocks: each block's fixed cost (lookup, map inserts, prologue, link patching) is paid less often.
+    size_t max_side_exits = 0;
+    /// x86Sim: a block never runs into this PC (its own block is special: the inline objc_msgSend probe)
+    u64 side_exit_stop_pc = 0;
 };
 
 /**

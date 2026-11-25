@@ -55,10 +55,13 @@ public:
 
     static Value EmptyNZCVImmediateMarker();
 
-    bool IsIdentity() const;
-    bool IsEmpty() const;
-    bool IsImmediate() const;
-    Type GetType() const;
+    // x86Sim: inline fast paths. Called millions of times per boot while translating (~3.5% of a no-cache boot's
+    // SpringBoard CPU out of line, which LTO kept: the Identity case recurses). Only an Opaque value (an instruction's
+    // result) can be an Identity; the rest is in value.cpp.
+    bool IsIdentity() const { return type == Type::Opaque && IsIdentitySlow(); }
+    bool IsEmpty() const { return type == Type::Void; }
+    bool IsImmediate() const { return type != Type::Opaque || IsImmediateSlow(); }
+    Type GetType() const { return type != Type::Opaque ? type : GetTypeSlow(); }
 
     Inst* GetInst() const;
     Inst* GetInstRecursive() const;
@@ -131,6 +134,10 @@ public:
     bool IsZero() const;
 
 private:
+    bool IsIdentitySlow() const;
+    bool IsImmediateSlow() const;
+    Type GetTypeSlow() const;
+
     Type type;
 
     union {

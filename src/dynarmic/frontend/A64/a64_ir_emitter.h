@@ -35,6 +35,10 @@ public:
     u64 AlignPC(size_t alignment) const;
 
     void SetCheckBit(const IR::U1& value);
+    // x86Sim: leave the block for target here when cond holds (side exit; the block goes on with the next instruction)
+    void SideExitIf(IR::Cond cond, const LocationDescriptor& target);
+    // x86Sim: ... when bit == when
+    void SideExitIfBit(const IR::U1& bit, bool when, const LocationDescriptor& target);
     IR::U1 GetCFlag();
     IR::U32 GetNZCVRaw();
     void SetNZCVRaw(IR::U32 value);

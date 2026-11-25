@@ -23,6 +23,9 @@ struct TranslatorVisitor final {
 
     A64::IREmitter ir;
     TranslationOptions options;
+    // x86Sim: side exits taken so far in this block (TranslationOptions::max_side_exits)
+    size_t side_exits = 0;
+    bool CanSideExit();
 
     bool InterpretThisInstruction();
     bool UnpredictableInstruction();

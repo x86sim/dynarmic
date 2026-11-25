@@ -8,6 +8,8 @@
 #include <array>
 #include <vector>
 
+#include <mcl/stdint.hpp>
+
 #include "dynarmic/ir/type.h"
 
 namespace Dynarmic::IR {
@@ -56,8 +58,16 @@ Type GetTypeOf(Opcode op) {
     return OpcodeInfo::opcode_info.at(static_cast<size_t>(op)).type;
 }
 
+// x86Sim: a flat byte table (Inst::NumArgs runs for every argument loop while translating)
+static const auto num_args_of = [] {
+    std::array<u8, OpcodeInfo::opcode_info.size()> n{};
+    for (size_t i = 0; i < n.size(); i++)
+        n[i] = static_cast<u8>(OpcodeInfo::opcode_info[i].arg_types.size());
+    return n;
+}();
+
 size_t GetNumArgsOf(Opcode op) {
-    return OpcodeInfo::opcode_info.at(static_cast<size_t>(op)).arg_types.size();
+    return num_args_of[static_cast<size_t>(op)];
 }
 
 Type GetArgTypeOf(Opcode op, size_t arg_index) {

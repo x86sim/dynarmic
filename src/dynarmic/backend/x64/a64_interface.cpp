@@ -22,6 +22,7 @@
 #include <mcl/scope_exit.hpp>
 
 #include "dynarmic/backend/x64/a64_emit_x64.h"
+#include "dynarmic/backend/x64/a64_interp.h"
 #include "dynarmic/backend/x64/a64_jitstate.h"
 #include "dynarmic/backend/x64/block_of_code.h"
 #include "dynarmic/backend/x64/devirtualize.h"
@@ -130,10 +131,19 @@ struct Jit::SharedCode final {
     // Bumped under mutex() on every shared Invalidate/Clear so a thread that translated IR
     // without the lock can detect a concurrent invalidation and discard that IR.
     u64 invalidate_gen = 0;
+    // x86Sim: tiered translation (UserConfig::interpret_threshold): the stub GetBlock hands out for a cold block
+    std::atomic<CodePtr> interp_stub{nullptr};
 };
 
+std::string Jit::BlockCountHistogram() {
+    return A64EmitX64::BlockCountHistogram();
+}
+
 Jit::SharedStats Jit::GetSharedStats(const SharedCode& shared) {
-    return shared.stats;
+    SharedStats s = shared.stats;
+    s.fastmem_faults = shared.emitter.FastmemFaults();
+    s.checked_retranslations = shared.emitter.CheckedRetranslations();
+    return s;
 }
 
 void Jit::WithSharedLock(SharedCode& shared, void (*fn)(void*), void* arg) {
@@ -509,6 +519,70 @@ public:
 
     // Perf 1: initial-exec (no __tls_get_addr per LookupBlockThunk; 8 bytes of glibc's static TLS surplus)
     static thread_local Impl* t_running __attribute__((tls_model("initial-exec")));
+
+    // x86Sim: tiered translation (shared translations only). This thread's count of how often each block it found
+    // untranslated ran in the interpreter (a block warm on several threads is promoted a little later; no lock).
+    // Whether the block at loc runs there this time: not single-stepped, not the inline objc_msgSend, fewer than
+    // interpret_threshold runs. At the threshold it is promoted: GetBlock (translating) drops its count.
+    bool WantInterpret(IR::LocationDescriptor loc, bool translating) {
+        const A64::LocationDescriptor l{loc};
+        if (l.SingleStepping() || l.PC() == conf.inline_objc_msgsend || emitter.InStaticImage(loc)) {
+            return false;  // (an AOT image block not registered yet: GetBlock's locked path registers it)
+        }
+        auto it = interp_counts.find(loc.Value());
+        if (it == interp_counts.end()) {
+            it = interp_counts.insert({loc.Value(), 0}).first;
+        }
+        if (it.value() >= conf.interpret_threshold) {
+            if (translating) {
+                interp_counts.erase(it);
+            }
+            return false;
+        }
+        it.value()++;
+        return true;
+    }
+    CodePtr InterpStub() {
+        CodePtr stub = shared->interp_stub.load(std::memory_order_acquire);
+        if (!stub) {
+            std::unique_lock lock{shared->mutex()};
+            stub = shared->interp_stub.load(std::memory_order_relaxed);
+            if (!stub) {
+                stub = emitter.EmitInterpStub(reinterpret_cast<const void*>(&InterpThunk));
+                shared->interp_stub.store(stub, std::memory_order_release);
+            }
+        }
+        return stub;
+    }
+
+    // x86Sim: the stub's call (pinned registers and NZCV in the JIT state): interprets from the current PC, block after
+    // block while the next one is cold too, then returns to the dispatcher (which jumps to the next block, translated
+    // or the stub again). An instruction the interpreter does not run is translated from where it is (its count is
+    // set to the threshold: the next GetBlock translates).
+    static void InterpThunk() {
+        t_running->InterpretHere();
+    }
+    void InterpretHere() {
+        u64 blocks_run = 0, insns_run = 0;
+        for (size_t blocks = 0; blocks < 64; blocks++) {
+            size_t n = 0;
+            const InterpStop r = InterpretBlock(jit_state, conf.callbacks, 256, n);
+            blocks_run++;
+            insns_run += n;
+            const IR::LocationDescriptor next = GetCurrentLocation();
+            if (r == InterpStop::Unsupported) {
+                interp_counts[next.Value()] = static_cast<u32>(conf.interpret_threshold);
+                __atomic_fetch_add(&shared->stats.interp_unsupported, 1, __ATOMIC_RELAXED);
+                break;
+            }
+            if (jit_state.halt_reason != 0 || emitter.LookupEntrypoint(next) || !WantInterpret(next, false)) {
+                break;
+            }
+        }
+        __atomic_fetch_add(&shared->stats.interp_blocks, blocks_run, __ATOMIC_RELAXED);
+        __atomic_fetch_add(&shared->stats.interp_insns, insns_run, __ATOMIC_RELAXED);
+    }
+    tsl::robin_map<u64, u32, PcHash> interp_counts;  // x86Sim: WantInterpret
     CodePtr GetCurrentBlock() {
         return GetBlock(GetCurrentLocation());
     }
@@ -608,6 +682,11 @@ private:
                 }
                 return ep;
             }
+            // x86Sim: tiered translation: not translated (the lock-free map just missed): a cold block runs in the
+            // interpreter (InterpThunk, through the stub). No lock: the counts are this thread's.
+            if (conf.interpret_threshold && WantInterpret(current_location, true)) {
+                return InterpStub();
+            }
         }
         for (;;) {
             if (conf.shared_translations) {
@@ -661,6 +740,8 @@ private:
             topts.wall_clock_cntpct = conf.wall_clock_cntpct;
             topts.memory_read_code = get_code;
             topts.fuse_svc_ret = conf.fuse_svc_ret;
+            topts.max_side_exits = conf.enable_cycle_counting ? 0 : conf.max_side_exits;
+            topts.side_exit_stop_pc = conf.inline_objc_msgsend;
             IR::Block ir_block = A64::Translate(A64::LocationDescriptor{current_location}, get_code, topts);
             Optimization::PolyfillPass(ir_block, polyfill_options);
             Optimization::A64CallbackConfigPass(ir_block, conf);
@@ -680,7 +761,10 @@ private:
                 Optimization::A64StubLinkPass(ir_block, conf.callbacks);
             }
             Optimization::IdentityRemovalPass(ir_block);
+#ifndef NDEBUG
+            // x86Sim: a debug check (types, use counts; a std::map per block): ~3% of translating in release
             Optimization::VerificationPass(ir_block);
+#endif
             const size_t guest_instructions = ir_block.CycleCount();
 
             if (conf.shared_translations) {

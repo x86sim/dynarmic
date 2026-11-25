@@ -36,8 +36,14 @@ public:
         /// x86Sim Perf 1 (X86SIM_A64_PROFILE only): GetBlock calls, of them from the emitted dispatcher's miss path
         /// (LookupBlockThunk), and where they were answered (per-thread L0, FastDispatch probe, lock-free map)
         std::uint64_t getblock = 0, thunk = 0, l0_hits = 0, probe_hits = 0, lf_hits = 0;
+        /// x86Sim: fastmem faults taken, and blocks retranslated with the address check after them
+        std::uint64_t fastmem_faults = 0, checked_retranslations = 0;
+        /// x86Sim: interpreted (UserConfig::interpret_threshold): blocks run, guest instructions run, PCs sent to translation
+        std::uint64_t interp_blocks = 0, interp_insns = 0, interp_unsupported = 0;
     };
     static SharedStats GetSharedStats(const SharedCode& shared);
+    /// x86Sim (X86SIM_A64_BLOCKCOUNT=1): how often the translated blocks ran, as a histogram line (empty when off)
+    static std::string BlockCountHistogram();
     /// x86Sim Perf 1 (X86SIM_A64_PROFILE): the guest PCs looked up most through the dispatcher's C++ path, (count, pc)
     static std::vector<std::pair<std::uint64_t, std::uint64_t>> TopThunkTargets(std::size_t n, bool callers = false);
     /// x86Sim RAM 4: runs fn(arg) with the shared emitter lock held (every write to translated code, including the

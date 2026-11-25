@@ -76,6 +76,18 @@ inline SharedLabel GenSharedLabel() {
     return std::make_shared<Xbyak::Label>();
 }
 
+// x86Sim: the hash of the per-process block maps (block_descriptors, patch_information's heads). std::hash<u64> is
+// the identity in libstdc++, and tsl's power-of-two policy masks its low bits: guest PCs are 4-aligned and clustered,
+// so 3 of 4 buckets were never used and inserts walked long Robin Hood chains (at load factor 0.9, past 100% of the
+// buckets in use): 20% of SpringBoard's CPU in a boot without the translation cache went to those two inserts.
+// Fibonacci hashing, as LockFreeBlockMap's.
+struct PcHash {
+    size_t operator()(u64 k) const noexcept { return (k * 0x9E3779B97F4A7C15ull) >> 24; }
+};
+struct LocationHash {
+    size_t operator()(const IR::LocationDescriptor& x) const noexcept { return PcHash{}(x.Value()); }
+};
+
 class EmitX64 {
 public:
     struct BlockDescriptor {
@@ -90,6 +102,12 @@ public:
     /// Looks up an emitted host block in the cache.
     /// x86Sim: registers a static AOT image block on its first lookup (callers hold the emitter lock).
     std::optional<BlockDescriptor> GetBasicBlock(IR::LocationDescriptor descriptor);
+    /// x86Sim: the AOT image has a block for descriptor (registered or not yet): no lock (the image is immutable)
+    bool InStaticImage(IR::LocationDescriptor descriptor) const {
+        if (!static_image.active) return false;
+        const size_t i = static_image.Index(descriptor.Value());
+        return i < static_image.n_blocks && !static_image.Dead(i);
+    }
 
     /// x86Sim: lock-free GetBasicBlock for the dispatcher hit path (shared translations: GetBasicBlock needs the
     /// shared mutex, this does not). nullptr = not known here; the caller falls back to the locked path.
@@ -192,7 +210,7 @@ protected:
         size_t MemoryBytes() const { return heads.bucket_count() * 24 + sites.capacity() * 8 + next.capacity() * 4; }
 
     private:
-        tsl::robin_map<u64, u32, std::hash<u64>, std::equal_to<u64>, MetaAlloc<std::pair<u64, u32>, kMetaLinks>> heads;
+        tsl::robin_map<u64, u32, PcHash, std::equal_to<u64>, MetaAlloc<std::pair<u64, u32>, kMetaLinks>> heads;
         std::vector<u64, MetaAlloc<u64, kMetaLinks>> sites;
         std::vector<u32, MetaAlloc<u32, kMetaLinks>> next;
     };
@@ -210,7 +228,7 @@ protected:
     // State
     BlockOfCode& code;
     ExceptionHandler exception_handler;
-    tsl::robin_map<IR::LocationDescriptor, BlockDescriptor, std::hash<IR::LocationDescriptor>, std::equal_to<IR::LocationDescriptor>,
+    tsl::robin_map<IR::LocationDescriptor, BlockDescriptor, LocationHash, std::equal_to<IR::LocationDescriptor>,
                    MetaAlloc<std::pair<IR::LocationDescriptor, BlockDescriptor>, kMetaBlocks>>
         block_descriptors;
     // x86Sim: insert-only open-addressing mirror of block_descriptors (key -> entrypoint), written under the shared

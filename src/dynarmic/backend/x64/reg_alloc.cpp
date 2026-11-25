@@ -6,6 +6,7 @@
 #include "dynarmic/backend/x64/reg_alloc.h"
 
 #include <algorithm>
+#include <bit>
 #include <numeric>
 #include <utility>
 
@@ -507,9 +508,14 @@ void RegAlloc::ReleaseStackSpace(size_t stack_space) {
     code.add(code.rsp, static_cast<u32>(stack_space));
 }
 
+static_assert(NonSpillHostLocCount + SpillCount <= 128, "RegAlloc::scope_dirty holds 128 locations");
+
 void RegAlloc::EndOfAllocScope() {
-    for (auto& iter : hostloc_info) {
-        iter.ReleaseAll();
+    for (size_t w = 0; w < scope_dirty.size(); w++) {
+        for (u64 m = scope_dirty[w]; m; m &= m - 1) {
+            hostloc_info[w * 64 + static_cast<size_t>(std::countr_zero(m))].ReleaseAll();
+        }
+        scope_dirty[w] = 0;
     }
 }
 
@@ -685,7 +691,9 @@ HostLoc RegAlloc::FindFreeSpill() const {
 
 HostLocInfo& RegAlloc::LocInfo(HostLoc loc) {
     ASSERT(loc != HostLoc::RSP && loc != HostLoc::R15);
-    return hostloc_info[static_cast<size_t>(loc)];
+    const size_t i = static_cast<size_t>(loc);
+    scope_dirty[i / 64] |= u64(1) << (i % 64);
+    return hostloc_info[i];
 }
 
 const HostLocInfo& RegAlloc::LocInfo(HostLoc loc) const {

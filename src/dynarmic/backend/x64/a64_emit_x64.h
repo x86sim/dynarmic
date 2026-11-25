@@ -80,6 +80,11 @@ public:
     size_t LoadPersistentCache(const std::string& path, const u8 cache_uuid[16], u64 build_id,
                                u64 cache_lo, u64 cache_hi, bool shared_image = false);
     std::vector<u64> DynamicDescriptors(u64 lo, u64 hi);  // Speed 31 (Jit::GetDynamicDescriptors)
+    // x86Sim: fastmem faults taken, blocks retranslated with the address check (X86SIM_A64_PROFILE)
+    u64 FastmemFaults() const { return fastmem_faults; }
+    static std::string BlockCountHistogram();  // x86Sim: X86SIM_A64_BLOCKCOUNT
+    CodePtr EmitInterpStub(const void* fn);  // x86Sim: tiered translation (UserConfig::interpret_threshold)
+    u64 CheckedRetranslations() const { return checked_retranslations; }
     std::vector<u64> UsedImageDescriptors(u64 lo, u64 hi);  // RAM 2 (Jit::GetUsedImageDescriptors)
     static std::vector<u64> ReadPersistentDescriptors(const std::string& path, const u8 cache_uuid[16], u64 build_id);
     /// x86Sim Speed 18 (chunked AOT image): when set, Emit appends the block's direct successors (link targets, call
@@ -290,6 +295,9 @@ protected:
     void EmitExclusiveWriteMemoryInline(A64EmitContext& ctx, IR::Inst* inst);
 
     // Terminal instruction emitters
+    // x86Sim: a side exit's taken path (EmitA64SideExitIf/IfBit)
+    void EmitSideExitLink(A64EmitContext& ctx, IR::LocationDescriptor target);
+    bool side_exit_zf_is_bit = false;  // the IsZero emitted right before left ZF = the side exit's bit
     void EmitTerminalImpl(IR::Term::Interpret terminal, IR::LocationDescriptor initial_location, bool is_single_step) override;
     void EmitTerminalImpl(IR::Term::ReturnToDispatch terminal, IR::LocationDescriptor initial_location, bool is_single_step) override;
     void EmitTerminalImpl(IR::Term::LinkBlock terminal, IR::LocationDescriptor initial_location, bool is_single_step) override;

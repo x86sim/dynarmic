@@ -165,6 +165,7 @@ bool Inst::ReadsFromCPSR() const {
     case Opcode::A32UpdateUpperLocationDescriptor:
     case Opcode::A64GetCFlag:
     case Opcode::A64GetNZCVRaw:
+    case Opcode::A64SideExitIf:  // x86Sim: its condition is on the stored NZCV
     case Opcode::ConditionalSelect32:
     case Opcode::ConditionalSelect64:
     case Opcode::ConditionalSelectNZCV:
@@ -550,6 +551,8 @@ bool Inst::IsSetCheckBitOperation() const {
 bool Inst::MayHaveSideEffects() const {
     return op == Opcode::PushRSB
         || op == Opcode::CallHostFunction
+        || op == Opcode::A64SideExitIf
+        || op == Opcode::A64SideExitIfBit
         || op == Opcode::A64DataCacheOperationRaised
         || op == Opcode::A64InstructionCacheOperationRaised
         || IsSetCheckBitOperation()
@@ -637,16 +640,18 @@ size_t Inst::NumArgs() const {
     return GetNumArgsOf(op);
 }
 
+// x86Sim: GetArg's and SetArg's checks are debug-only, as VerificationPass is: two opcode-table lookups (and a type
+// compare) per call, several million calls per boot while translating; they only ever catch translator bugs.
 Value Inst::GetArg(size_t index) const {
-    ASSERT_MSG(index < GetNumArgsOf(op), "Inst::GetArg: index {} >= number of arguments of {} ({})", index, op, GetNumArgsOf(op));
-    ASSERT_MSG(!args[index].IsEmpty() || GetArgTypeOf(op, index) == IR::Type::Opaque, "Inst::GetArg: index {} is empty", index, args[index].GetType());
+    DEBUG_ASSERT_MSG(index < GetNumArgsOf(op), "Inst::GetArg: index {} >= number of arguments of {} ({})", index, op, GetNumArgsOf(op));
+    DEBUG_ASSERT_MSG(!args[index].IsEmpty() || GetArgTypeOf(op, index) == IR::Type::Opaque, "Inst::GetArg: index {} is empty", index, args[index].GetType());
 
     return args[index];
 }
 
 void Inst::SetArg(size_t index, Value value) {
-    ASSERT_MSG(index < GetNumArgsOf(op), "Inst::SetArg: index {} >= number of arguments of {} ({})", index, op, GetNumArgsOf(op));
-    ASSERT_MSG(AreTypesCompatible(value.GetType(), GetArgTypeOf(op, index)), "Inst::SetArg: type {} of argument {} not compatible with operation {} ({})", value.GetType(), index, op, GetArgTypeOf(op, index));
+    DEBUG_ASSERT_MSG(index < GetNumArgsOf(op), "Inst::SetArg: index {} >= number of arguments of {} ({})", index, op, GetNumArgsOf(op));
+    DEBUG_ASSERT_MSG(AreTypesCompatible(value.GetType(), GetArgTypeOf(op, index)), "Inst::SetArg: type {} of argument {} not compatible with operation {} ({})", value.GetType(), index, op, GetArgTypeOf(op, index));
 
     if (!args[index].IsImmediate()) {
         UndoUse(args[index]);

@@ -7,9 +7,28 @@
 
 namespace Dynarmic::A64 {
 
+// x86Sim: whether this conditional branch may be a side exit (TranslationOptions::max_side_exits): not when single
+// stepping, within the budget, not running into the stop PC, and not a block grown past 256 instructions.
+bool TranslatorVisitor::CanSideExit() {
+    if (options.max_side_exits == 0 || side_exits >= options.max_side_exits || ir.current_location->SingleStepping())
+        return false;
+    if (ir.block.CycleCount() >= 256)
+        return false;
+    const u64 next = ir.PC() + 4;
+    if (options.side_exit_stop_pc != 0 && next == options.side_exit_stop_pc)
+        return false;
+    side_exits++;
+    return true;
+}
+
 bool TranslatorVisitor::B_cond(Imm<19> imm19, Cond cond) {
     const s64 offset = concatenate(imm19, Imm<2>{0}).SignExtend<s64>();
     const u64 target = ir.PC() + offset;
+
+    if (cond != Cond::AL && cond != Cond::NV && CanSideExit()) {
+        ir.SideExitIf(cond, ir.current_location->SetPC(target));
+        return true;
+    }
 
     const auto cond_pass = IR::Term::LinkBlock{ir.current_location->SetPC(target)};
     const auto cond_fail = IR::Term::LinkBlock{ir.current_location->AdvancePC(4)};
@@ -69,6 +88,10 @@ bool TranslatorVisitor::CBZ(bool sf, Imm<19> imm19, Reg Rt) {
 
     const IR::U32U64 operand1 = X(datasize, Rt);
 
+    if (CanSideExit()) {
+        ir.SideExitIfBit(ir.IsZero(operand1), true, ir.current_location->SetPC(ir.PC() + offset));
+        return true;
+    }
     ir.SetCheckBit(ir.IsZero(operand1));
 
     const u64 target = ir.PC() + offset;
@@ -84,6 +107,10 @@ bool TranslatorVisitor::CBNZ(bool sf, Imm<19> imm19, Reg Rt) {
 
     const IR::U32U64 operand1 = X(datasize, Rt);
 
+    if (CanSideExit()) {
+        ir.SideExitIfBit(ir.IsZero(operand1), false, ir.current_location->SetPC(ir.PC() + offset));
+        return true;
+    }
     ir.SetCheckBit(ir.IsZero(operand1));
 
     const u64 target = ir.PC() + offset;
@@ -100,6 +127,10 @@ bool TranslatorVisitor::TBZ(Imm<1> b5, Imm<5> b40, Imm<14> imm14, Reg Rt) {
 
     const auto operand = X(datasize, Rt);
 
+    if (CanSideExit()) {
+        ir.SideExitIfBit(ir.TestBit(operand, ir.Imm8(bit_pos)), false, ir.current_location->SetPC(ir.PC() + offset));
+        return true;
+    }
     ir.SetCheckBit(ir.TestBit(operand, ir.Imm8(bit_pos)));
 
     const u64 target = ir.PC() + offset;
@@ -116,6 +147,10 @@ bool TranslatorVisitor::TBNZ(Imm<1> b5, Imm<5> b40, Imm<14> imm14, Reg Rt) {
 
     const auto operand = X(datasize, Rt);
 
+    if (CanSideExit()) {
+        ir.SideExitIfBit(ir.TestBit(operand, ir.Imm8(bit_pos)), true, ir.current_location->SetPC(ir.PC() + offset));
+        return true;
+    }
     ir.SetCheckBit(ir.TestBit(operand, ir.Imm8(bit_pos)));
 
     const u64 target = ir.PC() + offset;

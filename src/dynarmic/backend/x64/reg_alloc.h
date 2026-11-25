@@ -178,6 +178,10 @@ private:
     HostLoc FindFreeSpill() const;
 
     std::vector<HostLocInfo> hostloc_info;
+    // x86Sim: the locations LocInfo() handed out for writing since the last EndOfAllocScope(), which releases only
+    // those (ReleaseAll() of an untouched one changes nothing): it walked all 96 (16 GPRs, 16 XMMs, 64 spill slots)
+    // after every IR instruction, ~5% of translating.
+    std::array<u64, 2> scope_dirty{};
     HostLocInfo& LocInfo(HostLoc loc);
     const HostLocInfo& LocInfo(HostLoc loc) const;
 

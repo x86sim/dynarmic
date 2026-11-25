@@ -10,7 +10,10 @@
 namespace Dynarmic::Common {
 
 Pool::Pool(size_t object_size, size_t initial_pool_size)
-        : object_size(object_size), slab_size(initial_pool_size) {
+        : Pool(object_size, initial_pool_size, initial_pool_size) {}
+
+Pool::Pool(size_t object_size, size_t initial_pool_size, size_t max_pool_size)
+        : object_size(object_size), slab_size(initial_pool_size), max_slab_size(max_pool_size) {
     AllocateNewSlab();
 }
 
@@ -25,6 +28,9 @@ Pool::~Pool() {
 void* Pool::Alloc() {
     if (remaining == 0) {
         slabs.push_back(current_slab);
+        if (slab_size < max_slab_size) {
+            slab_size = slab_size * 2 < max_slab_size ? slab_size * 2 : max_slab_size;
+        }
         AllocateNewSlab();
     }
 

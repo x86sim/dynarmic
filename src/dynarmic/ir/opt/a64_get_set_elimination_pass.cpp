@@ -161,6 +161,17 @@ void A64GetSetElimination(IR::Block& block) {
             do_set(nzcv_info, inst->GetArg(0), inst, TrackingType::NZCVRaw);
             break;
         }
+        case IR::Opcode::A64SideExitIf:
+        case IR::Opcode::A64SideExitIfBit: {
+            // x86Sim: a side exit leaves for another block, which reads the guest state from the JIT state: every
+            // write before it stays (a later write to the same register no longer replaces it). The values are still
+            // known to the instructions after it (the exit not taken).
+            for (auto& r : reg_info) r.set_instruction_present = false;
+            for (auto& r : vec_info) r.set_instruction_present = false;
+            sp_info.set_instruction_present = false;
+            nzcv_info.set_instruction_present = false;
+            break;
+        }
         default: {
             if (inst->ReadsFromCPSR() || inst->WritesToCPSR()) {
                 nzcv_info = {};

@@ -24,7 +24,9 @@
 #include <immintrin.h>
 #include <algorithm>
 #include <cstdio>
+#include <atomic>
 #include <cstdlib>
+#include <string>
 #include <cstring>
 #include <tuple>
 #include <unordered_map>
@@ -218,6 +220,38 @@ void CollectSuccessors(const IR::Terminal& t, std::vector<u64>& out) {
 }
 }  // namespace
 
+// x86Sim (measurement, X86SIM_A64_BLOCKCOUNT=1): every translated block counts its executions (a prologue increment),
+// for the histogram of how often translated blocks run (BlockCountHistogram): is translating cold code worth it?
+namespace {
+constexpr u32 kBcMax = 1u << 23;
+const bool g_bc_on = std::getenv("X86SIM_A64_BLOCKCOUNT") != nullptr;
+u32* g_bc_counts = nullptr;
+u16* g_bc_insns = nullptr;
+std::atomic<u32> g_bc_n{0};
+}  // namespace
+
+std::string A64EmitX64::BlockCountHistogram() {
+    if (!g_bc_on || !g_bc_counts) return {};
+    const u32 n = std::min(g_bc_n.load(), kBcMax);
+    static const u64 edges[] = {1, 2, 4, 8, 16, 64, 1024, ~0ull};
+    u64 blocks[8] = {}, insns[8] = {};
+    for (u32 i = 0; i < n; i++) {
+        const u64 c = __atomic_load_n(&g_bc_counts[i], __ATOMIC_RELAXED);
+        size_t b = 0;
+        while (c > edges[b]) b++;
+        blocks[b]++;
+        insns[b] += g_bc_insns[i];
+    }
+    std::string s = "blockcount (executions <= N: blocks/guest insns):";
+    char buf[64];
+    for (size_t b = 0; b < 8; b++) {
+        std::snprintf(buf, sizeof buf, " %s%llu: %llu/%llu", b == 7 ? ">" : "<=", (unsigned long long)(b == 7 ? 1024 : edges[b]),
+                      (unsigned long long)blocks[b], (unsigned long long)insns[b]);
+        s += buf;
+    }
+    return s;
+}
+
 A64EmitX64::BlockDescriptor A64EmitX64::Emit(IR::Block& block) {
     if (conf.very_verbose_debugging_output) {
         std::puts(IR::DumpBlock(block).c_str());
@@ -227,6 +261,12 @@ A64EmitX64::BlockDescriptor A64EmitX64::Emit(IR::Block& block) {
         for (const auto& inst : block) {
             if (inst.GetOpcode() == IR::Opcode::PushRSB && inst.GetArg(0).IsImmediate()) {
                 aot_successors->push_back(inst.GetArg(0).GetU64());
+            }
+            // x86Sim: side exits' targets
+            if (inst.GetOpcode() == IR::Opcode::A64SideExitIf) {
+                aot_successors->push_back(inst.GetArg(1).GetU64());
+            } else if (inst.GetOpcode() == IR::Opcode::A64SideExitIfBit) {
+                aot_successors->push_back(inst.GetArg(2).GetU64());
             }
         }
     }
@@ -270,6 +310,20 @@ A64EmitX64::BlockDescriptor A64EmitX64::Emit(IR::Block& block) {
     // Start emitting.
     code.align();
     const u8* const entrypoint = code.getCurr();
+    if (g_bc_on && !ctx.IsSingleStep()) {
+        if (!g_bc_counts) {
+            g_bc_counts = static_cast<u32*>(std::calloc(kBcMax, sizeof(u32)));
+            g_bc_insns = static_cast<u16*>(std::calloc(kBcMax, sizeof(u16)));
+        }
+        const u32 i = g_bc_n.fetch_add(1);
+        if (i < kBcMax) {
+            g_bc_insns[i] = static_cast<u16>(std::min<size_t>(block.CycleCount(), 65535));
+            code.push(rax);
+            code.mov(rax, reinterpret_cast<u64>(&g_bc_counts[i]));
+            code.inc(dword[rax]);
+            code.pop(rax);
+        }
+    }
 
     ASSERT(block.GetCondition() == IR::Cond::AL);
 
@@ -286,12 +340,17 @@ A64EmitX64::BlockDescriptor A64EmitX64::Emit(IR::Block& block) {
             flags_after = nz->GetOpcode() == IR::Opcode::GetNZCVFromOp && nz == prev_inst && !nz->GetArg(0).IsImmediate() &&
                           nz->GetArg(0).GetInst() == prev_prev_inst;
         }
-        host_flags_hold_nzcv = false;
+        // x86Sim: a side exit right after the SetNZCV of Perf 21 branches on the host flags, as a terminal does
+        host_flags_hold_nzcv = host_flags_hold_nzcv && inst->GetOpcode() == IR::Opcode::A64SideExitIf;
         // x86Sim Perf 22: SetCheckBit(IsZero(x)) right after the IsZero: its test left ZF = the bit
         const bool zf_after = inst->GetOpcode() == IR::Opcode::A64SetCheckBit && !inst->GetArg(0).IsImmediate() &&
                               inst->GetArg(0).GetInst() == prev_inst &&
                               (prev_inst->GetOpcode() == IR::Opcode::IsZero32 || prev_inst->GetOpcode() == IR::Opcode::IsZero64);
         host_zf_is_check_bit = false;
+        // x86Sim: ... and a bit side exit of the IsZero right before it: ZF is the bit
+        side_exit_zf_is_bit = inst->GetOpcode() == IR::Opcode::A64SideExitIfBit && !inst->GetArg(0).IsImmediate() &&
+                              prev_inst && inst->GetArg(0).GetInst() == prev_inst &&
+                              (prev_inst->GetOpcode() == IR::Opcode::IsZero32 || prev_inst->GetOpcode() == IR::Opcode::IsZero64);
 
         // Call the relevant Emit* member function.
         switch (inst->GetOpcode()) {
@@ -2248,6 +2307,83 @@ void A64EmitX64::EmitA64SetCheckBit(A64EmitContext& ctx, IR::Inst* inst) {
     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
     const Xbyak::Reg8 to_store = ctx.reg_alloc.UseGpr(args[0]).cvt8();
     code.mov(code.byte[rsp + ABI_SHADOW_SPACE + offsetof(StackLayout, check_bit)], to_store);
+}
+
+// x86Sim: tiered translation (UserConfig::interpret_threshold): the code GetBlock hands out for a block that runs in the
+// interpreter. Entered like a block (from the dispatcher, whose stack layout it keeps), it stores the pinned guest
+// registers and NZCV (Perf 14) to the JIT state, calls fn (the interpreter, on the JIT state), loads them back and
+// returns to the dispatcher, which looks up the PC the interpreter stopped at. It is in no block map: nothing links to it.
+CodePtr A64EmitX64::EmitInterpStub(const void* fn) {
+    code.EnableWriting();
+    SCOPE_EXIT {
+        code.DisableWriting();
+    };
+    code.align();
+    const CodePtr entry = code.getCurr<CodePtr>();
+    const auto pinned = [&](bool store) {
+        for (size_t i = 0; i < 4; i++) {
+            const int g = conf.pinned_regs[i];
+            if (g < 0) continue;
+            const Xbyak::Reg64 h = i == 0 ? code.r12 : i == 1 ? code.r13 : i == 2 ? code.r14 : code.rbp;
+            if (g == 32) {
+                if (store) code.mov(dword[r15 + JSO(cpsr_nzcv)], h.cvt32());
+                else code.mov(h.cvt32(), dword[r15 + JSO(cpsr_nzcv)]);
+            } else {
+                const auto at = qword[r15 + (g == 31 ? JSO(sp) : JSO(reg) + 8 * g)];
+                if (store) code.mov(at, h);
+                else code.mov(h, at);
+            }
+        }
+    };
+    pinned(true);
+    code.mov(rax, reinterpret_cast<u64>(fn));
+    code.call(rax);
+    pinned(false);
+    code.jmp(code.GetReturnFromRunCodeAddress(), code.T_NEAR);
+    return entry;
+}
+
+// x86Sim: side exits (TranslationOptions::max_side_exits). The taken path is the target's link, as a LinkBlock
+// terminal emits it (patchable, with the halt check of a backward link); it may clobber anything, since the block is
+// left there. The path not taken jumps over it and keeps every register: RAX, EmitCond's and the link's scratch, is
+// reserved first so no live value is in it.
+void A64EmitX64::EmitSideExitLink(A64EmitContext& ctx, IR::LocationDescriptor target) {
+    host_flags_hold_nzcv = false;
+    host_zf_is_check_bit = false;
+    EmitTerminal(IR::Term::LinkBlock{target}, ctx.Location().SetSingleStepping(false), false);
+}
+
+void A64EmitX64::EmitA64SideExitIf(A64EmitContext& ctx, IR::Inst* inst) {
+    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
+    const IR::Cond cond = args[0].GetImmediateCond();
+    const IR::LocationDescriptor target{args[1].GetImmediateU64()};
+    ASSERT(cond != IR::Cond::AL && cond != IR::Cond::NV);
+    ctx.reg_alloc.ScratchGpr(HostLoc::RAX);  // a mov at most: the host flags (host_flags_hold_nzcv) survive
+    // EQ/NE, CS/CC, ... GT/LE: the inverse condition is the pair's other half
+    Xbyak::Label stay = EmitCond(static_cast<IR::Cond>(static_cast<int>(cond) ^ 1));
+    EmitSideExitLink(ctx, target);
+    code.L(stay);
+}
+
+void A64EmitX64::EmitA64SideExitIfBit(A64EmitContext& ctx, IR::Inst* inst) {
+    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
+    const bool when = args[1].GetImmediateU1();
+    const IR::LocationDescriptor target{args[2].GetImmediateU64()};
+    ctx.reg_alloc.ScratchGpr(HostLoc::RAX);
+    const Xbyak::Reg8 bit = ctx.reg_alloc.UseGpr(args[0]).cvt8();  // (movs at most: the flags survive)
+    Xbyak::Label stay;
+    // ZF = the bit when it comes from the IsZero right before (its test), else ZF = !bit
+    const bool zf_set_when_bit = side_exit_zf_is_bit;
+    if (!zf_set_when_bit) {
+        code.test(bit, bit);
+    }
+    if (when == zf_set_when_bit) {
+        code.jnz(stay, code.T_NEAR);  // bit == when <=> ZF == 1 here: stay when ZF == 0
+    } else {
+        code.jz(stay, code.T_NEAR);
+    }
+    EmitSideExitLink(ctx, target);
+    code.L(stay);
 }
 
 void A64EmitX64::EmitA64GetCFlag(A64EmitContext& ctx, IR::Inst* inst) {
