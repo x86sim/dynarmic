@@ -90,6 +90,16 @@ void A64GetSetElimination(IR::Block& block) {
     };
 
     for (auto inst = block.begin(); inst != block.end(); ++inst) {
+        // x86Sim: a guest load or store may fault, and the guest's signal handler then gets the guest state from the
+        // JIT state (a crash reporter's report; .NET NativeAOT unwinds from it to throw a NullReferenceException): every
+        // write before the access stays, as before a side exit. A dropped one left e.g. sp of the caller with fp of the
+        // new frame (a prologue's sub sp, later replaced by the epilogue's add), and the managed unwinder lost the frame.
+        if (inst->IsMemoryReadOrWrite()) {
+            for (auto& r : reg_info) r.set_instruction_present = false;
+            for (auto& r : vec_info) r.set_instruction_present = false;
+            sp_info.set_instruction_present = false;
+            nzcv_info.set_instruction_present = false;
+        }
         switch (inst->GetOpcode()) {
         case IR::Opcode::A64GetW: {
             const size_t index = A64::RegNumber(inst->GetArg(0).GetA64RegRef());
