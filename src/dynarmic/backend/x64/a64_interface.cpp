@@ -10,6 +10,7 @@
 #include <array>
 #include <cstdlib>
 #include <cstring>
+#include <csetjmp>
 #include <ctime>
 #include <memory>
 #include <mutex>
@@ -267,8 +268,11 @@ public:
         ++run_depth;
         Impl* const outer_running = t_running;
         t_running = this;
+        sigjmp_buf* const outer_interp = interp_leave;  // a nested run (a guest signal handler) is not the interpreter
+        interp_leave = nullptr;
         SCOPE_EXIT {
             t_running = outer_running;
+            interp_leave = outer_interp;
             if (--this->run_depth == 0) {
                 this->is_executing = false;
             }
@@ -562,13 +566,26 @@ public:
     static void InterpThunk() {
         t_running->InterpretHere();
     }
+    // A guest access that faults in the interpreter (in a memory callback) is a guest fault at jit_state.pc (the
+    // interpreter commits instruction by instruction): libarm64jit's SIGSEGV handler runs the guest's handler there
+    // (InInterpreter) and, when it changed the context (now in jit_state), leaves the interpreter (LeaveInterpreter):
+    // back here, and to the dispatcher, which goes on from the handler's state.
     void InterpretHere() {
-        u64 blocks_run = 0, insns_run = 0;
+        volatile u64 blocks_run = 0, insns_run = 0;
+        sigjmp_buf leave;
+        if (sigsetjmp(leave, 0)) {
+            interp_leave = nullptr;
+            __atomic_fetch_add(&shared->stats.interp_blocks, blocks_run + 1, __ATOMIC_RELAXED);
+            __atomic_fetch_add(&shared->stats.interp_insns, insns_run, __ATOMIC_RELAXED);
+            return;
+        }
         for (size_t blocks = 0; blocks < 64; blocks++) {
             size_t n = 0;
+            interp_leave = &leave;
             const InterpStop r = InterpretBlock(jit_state, conf.callbacks, 256, n);
-            blocks_run++;
-            insns_run += n;
+            interp_leave = nullptr;
+            blocks_run = blocks_run + 1;
+            insns_run = insns_run + n;
             const IR::LocationDescriptor next = GetCurrentLocation();
             if (r == InterpStop::Unsupported) {
                 interp_counts[next.Value()] = static_cast<u32>(conf.interpret_threshold);
@@ -583,6 +600,13 @@ public:
         __atomic_fetch_add(&shared->stats.interp_insns, insns_run, __ATOMIC_RELAXED);
     }
     tsl::robin_map<u64, u32, PcHash> interp_counts;  // x86Sim: WantInterpret
+    sigjmp_buf* interp_leave = nullptr;  // x86Sim: set while InterpretBlock runs on this Jit's innermost Run
+    bool InInterpreter() const {
+        return interp_leave != nullptr;
+    }
+    [[noreturn]] void LeaveInterpreter() {
+        siglongjmp(*interp_leave, 1);
+    }
     CodePtr GetCurrentBlock() {
         return GetBlock(GetCurrentLocation());
     }
@@ -1064,6 +1088,14 @@ void Jit::StorePinnedToHost(std::uint64_t host[4]) const {
 
 const void* Jit::ForceReturnAddress() const {
     return impl->ForceReturnAddress();
+}
+
+bool Jit::InInterpreter() const {
+    return impl->InInterpreter();
+}
+
+void Jit::LeaveInterpreter() {
+    impl->LeaveInterpreter();
 }
 
 Jit::StatePointers Jit::GetStatePointers() {

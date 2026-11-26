@@ -210,6 +210,12 @@ public:
     /// Where interrupted translated code (at a block's own stack depth) jumps to leave Run() at once (the pinned
     /// registers and MXCSR are written back on the way).
     const void* ForceReturnAddress() const;
+    /// Whether this thread is in the interpreter of cold code (UserConfig::interpret_threshold), in its innermost Run:
+    /// a fault in a memory callback there is the guest access at GetPC() (the state before that instruction).
+    bool InInterpreter() const;
+    /// From a signal handler on this thread, after a guest signal handler changed the state (SetRegisters, SetPC...):
+    /// abandon the interpreted instruction and continue from the new state. The caller restores the signal mask first.
+    [[noreturn]] void LeaveInterpreter();
 
     /// Clears exclusive state for this core.
     void ClearExclusiveState();
