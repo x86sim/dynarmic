@@ -233,13 +233,20 @@ public:
 
     ~Impl() = default;
 
+    // x86Sim: pretranslation (the AOT builders) always translates: with the cold-code interpreter
+    // (interpret_threshold) every block a builder asks for is new, so GetBlock handed out the interpreter stub and
+    // every chunk came out empty (RAM 14: images of libsystem alone, every process translating its own code).
     void Pretranslate(u64 location_descriptor) {
+        pretranslating = true;
         GetBlock(IR::LocationDescriptor{location_descriptor});
+        pretranslating = false;
     }
     bool PretranslateCollect(u64 location_descriptor, std::vector<u64>& successors) {
         const u64 before = shared ? shared->stats.blocks : 0;
         emitter.aot_successors = &successors;
+        pretranslating = true;
         GetBlock(IR::LocationDescriptor{location_descriptor});
+        pretranslating = false;
         emitter.aot_successors = nullptr;
         return !shared || shared->stats.blocks != before;
     }
@@ -528,9 +535,10 @@ public:
     // untranslated ran in the interpreter (a block warm on several threads is promoted a little later; no lock).
     // Whether the block at loc runs there this time: not single-stepped, not the inline objc_msgSend, fewer than
     // interpret_threshold runs. At the threshold it is promoted: GetBlock (translating) drops its count.
+    bool pretranslating = false;
     bool WantInterpret(IR::LocationDescriptor loc, bool translating) {
         const A64::LocationDescriptor l{loc};
-        if (l.SingleStepping() || l.PC() == conf.inline_objc_msgsend || emitter.InStaticImage(loc)) {
+        if (pretranslating || l.SingleStepping() || l.PC() == conf.inline_objc_msgsend || emitter.InStaticImage(loc)) {
             return false;  // (an AOT image block not registered yet: GetBlock's locked path registers it)
         }
         auto it = interp_counts.find(loc.Value());

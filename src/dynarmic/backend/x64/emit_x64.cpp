@@ -285,6 +285,13 @@ void EmitX64::PatchSite(PatchInformation::Kind kind, CodePtr location, const IR:
 }
 
 void EmitX64::PatchStaticSites(const IR::LocationDescriptor& target_desc, CodePtr target_code_ptr) {
+    // x86Sim RAM 14: image sites are not linked to code outside the image (live-translated blocks) unless
+    // X86SIM_A64_IMAGE_LIVE_LINK=1. Each such link wrote into a page of the mapped image and made it a private copy:
+    // ~20 MB per daemon, ~1 GB per iPhone. Unlinked, the exit goes through the dispatcher (fast dispatch table).
+    static const bool live_link = [] { const char* e = std::getenv("X86SIM_A64_IMAGE_LIVE_LINK"); return e && std::atoi(e) == 1; }();
+    if (target_code_ptr && !live_link && static_image.Index(target_desc.Value()) >= static_image.n_blocks) {
+        return;
+    }
     const auto [lo, hi] = static_image.Sites(target_desc.Value());
     for (const auto* l = lo; l != hi; l++) {
         PatchSite(static_cast<PatchInformation::Kind>(l->kind), static_image.code_begin + l->site_off, target_desc, target_code_ptr);

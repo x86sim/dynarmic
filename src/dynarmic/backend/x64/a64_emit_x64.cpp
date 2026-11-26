@@ -3053,12 +3053,18 @@ void A64EmitX64::EmitSharedPatchSite(int kind, const IR::LocationDescriptor& tar
     code.db(0xB8);
     code.dq(A64::LocationDescriptor{target_desc}.PC());
     code.mov(qword[r15 + JSO(pc)], rax);
+    // x86Sim RAM 14: an unlinked site goes on through the fast dispatch probe (in the JIT, no Run() round trip) when
+    // the halt check has passed (JZ) or is not wanted (JMP). AOT image sites are no longer linked to live-translated
+    // code (that wrote into the shared image pages: ~1 GB of private copies per iPhone), so this is their common path.
+    const void* unlinked = kind != 0 && conf.HasOptimization(OptimizationFlag::FastDispatch) && terminal_handler_fast_dispatch_hint
+                               ? terminal_handler_fast_dispatch_hint
+                               : code.GetReturnFromRunCodeAddress();
     if (kind == 0) {
         code.jg(code.GetReturnFromRunCodeAddress());
     } else if (kind == 1) {
-        code.jz(code.GetReturnFromRunCodeAddress());
+        code.jz(unlinked);
     } else {
-        code.jmp(code.GetReturnFromRunCodeAddress());
+        code.jmp(unlinked);
     }
     code.EnsurePatchLocationSize(site, kind == 2 ? 22 : 23);
     u64 head;
@@ -3120,8 +3126,12 @@ void A64EmitX64::EmitPatchMovRcx(CodePtr target_code_ptr) {
     }
     const CodePtr patch_location = code.getCurr();
     if (conf.shared_translations && patching) {
-        // the imm64 is 8-byte aligned (PushRSBHelper): one atomic store
-        __atomic_store_n(reinterpret_cast<u64*>(reinterpret_cast<u64>(patch_location) + 2), reinterpret_cast<u64>(target_code_ptr), __ATOMIC_RELEASE);
+        // the imm64 is 8-byte aligned (PushRSBHelper): one atomic store; none when unchanged (x86Sim RAM 14: a mapped
+        // AOT image page stays shared when a lazily registered block relinks the same target)
+        u64* imm = reinterpret_cast<u64*>(reinterpret_cast<u64>(patch_location) + 2);
+        if (__atomic_load_n(imm, __ATOMIC_RELAXED) != reinterpret_cast<u64>(target_code_ptr)) {
+            __atomic_store_n(imm, reinterpret_cast<u64>(target_code_ptr), __ATOMIC_RELEASE);
+        }
         return;
     }
     // Absolute code pointer: block entry (CodeBegin-relative), ReturnFromRunCode or the fast dispatch handler.
