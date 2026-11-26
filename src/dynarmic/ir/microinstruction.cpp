@@ -565,6 +565,7 @@ bool Inst::MayHaveSideEffects() const {
         || WritesToFPSR()
         || AltersExclusiveState()
         || IsMemoryWrite()
+        || IsMemoryRead()  // x86Sim: a guest load faults even when its value is unused (RyuJIT's null check: ldr wzr, [xN])
         || IsCoprocessorInstruction();
 }
 
