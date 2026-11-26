@@ -543,6 +543,12 @@ public:
         }
         auto it = interp_counts.find(loc.Value());
         if (it == interp_counts.end()) {
+            // x86Sim RAM 14: blocks that ran once or twice stay here for good (a UI thread: ~500K, 12 MB of buckets
+            // per thread in SpringBoard). Past kInterpCountsMax, forget them: one that comes back runs in the
+            // interpreter up to interpret_threshold more times.
+            if (interp_counts.size() >= kInterpCountsMax) {
+                tsl::robin_map<u64, u32, PcHash>{}.swap(interp_counts);
+            }
             it = interp_counts.insert({loc.Value(), 0}).first;
         }
         if (it.value() >= conf.interpret_threshold) {
@@ -607,6 +613,7 @@ public:
         __atomic_fetch_add(&shared->stats.interp_blocks, blocks_run, __ATOMIC_RELAXED);
         __atomic_fetch_add(&shared->stats.interp_insns, insns_run, __ATOMIC_RELAXED);
     }
+    static constexpr size_t kInterpCountsMax = 64 * 1024;
     tsl::robin_map<u64, u32, PcHash> interp_counts;  // x86Sim: WantInterpret
     sigjmp_buf* interp_leave = nullptr;  // x86Sim: set while InterpretBlock runs on this Jit's innermost Run
     bool InInterpreter() const {
